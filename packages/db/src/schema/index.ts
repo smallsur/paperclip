@@ -1,6 +1,7 @@
 export { companies } from "./companies.js";
 export { companyLogos } from "./company_logos.js";
 export { authUsers, authSessions, authAccounts, authVerifications } from "./auth.js";
+export { userSidebarPreferences } from "./user_sidebar_preferences.js";
 export { instanceSettings } from "./instance_settings.js";
 export { instanceUserRoles } from "./instance_user_roles.js";
 export { agents } from "./agents.js";
@@ -50,6 +51,7 @@ export { activityLog } from "./activity_log.js";
 export { companySecrets } from "./company_secrets.js";
 export { companySecretVersions } from "./company_secret_versions.js";
 export { companySkills } from "./company_skills.js";
+export { companyUserSidebarPreferences } from "./company_user_sidebar_preferences.js";
 export { plugins } from "./plugins.js";
 export { pluginConfig } from "./plugin_config.js";
 export { pluginCompanySettings } from "./plugin_company_settings.js";
