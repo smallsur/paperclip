@@ -87,6 +87,9 @@ export function memoryRoutes(db: Db) {
   router.patch("/memory/bindings/:bindingId", validate(updateMemoryBindingSchema), async (req, res) => {
     assertBoard(req);
     const bindingId = req.params.bindingId as string;
+    const existing = await memory.getBindingById(bindingId);
+    if (!existing) throw notFound("Memory binding not found");
+    assertCompanyAccess(req, existing.companyId);
     const binding = await memory.updateBinding(bindingId, req.body);
     const actor = getActorInfo(req);
     await logActivity(db, {

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { agents } from "./agents.js";
@@ -51,6 +52,10 @@ export const memoryLocalRecords = pgTable(
       table.companyId,
       table.scopeIssueId,
       table.createdAt,
+    ),
+    contentSearchIdx: index("memory_local_records_fts_idx").using(
+      "gin",
+      sql`to_tsvector('english', coalesce(${table.title}, '') || ' ' || ${table.content})`,
     ),
   }),
 );

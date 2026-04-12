@@ -10530,6 +10530,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "memory_local_records_fts_idx": {
+          "name": "memory_local_records_fts_idx",
+          "columns": [
+            {
+              "expression": "to_tsvector('english', coalesce(\"title\", '') || ' ' || \"content\")",
+              "isExpression": true,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
         }
       },
       "foreignKeys": {

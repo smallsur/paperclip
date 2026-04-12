@@ -144,6 +144,7 @@ CREATE INDEX "memory_extraction_jobs_company_binding_created_idx" ON "memory_ext
 CREATE INDEX "memory_local_records_company_binding_created_idx" ON "memory_local_records" USING btree ("company_id","binding_id","created_at");--> statement-breakpoint
 CREATE INDEX "memory_local_records_company_agent_created_idx" ON "memory_local_records" USING btree ("company_id","scope_agent_id","created_at");--> statement-breakpoint
 CREATE INDEX "memory_local_records_company_issue_created_idx" ON "memory_local_records" USING btree ("company_id","scope_issue_id","created_at");--> statement-breakpoint
+CREATE INDEX "memory_local_records_fts_idx" ON "memory_local_records" USING gin (to_tsvector('english', coalesce("title", '') || ' ' || "content"));--> statement-breakpoint
 CREATE INDEX "memory_operations_company_occurred_idx" ON "memory_operations" USING btree ("company_id","occurred_at");--> statement-breakpoint
 CREATE INDEX "memory_operations_company_binding_occurred_idx" ON "memory_operations" USING btree ("company_id","binding_id","occurred_at");--> statement-breakpoint
 CREATE INDEX "memory_operations_company_issue_occurred_idx" ON "memory_operations" USING btree ("company_id","scope_issue_id","occurred_at");--> statement-breakpoint

@@ -558,6 +558,15 @@ export function memoryService(db: Db) {
   const service = {
     providers: async () => [LOCAL_BASIC_PROVIDER],
 
+    getBindingById: async (bindingId: string) => {
+      const row = await db
+        .select()
+        .from(memoryBindings)
+        .where(eq(memoryBindings.id, bindingId))
+        .then((rows) => rows[0] ?? null);
+      return row ? mapBinding(row) : null;
+    },
+
     listBindings: async (companyId: string) => {
       const rows = await db
         .select()
