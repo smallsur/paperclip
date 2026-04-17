@@ -1539,13 +1539,13 @@ describe("company portability", () => {
     expect(routineSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
       projectId: "project-created",
       title: "Monday Review",
-      assigneeAgentId: null,
+      assigneeAgentId: "agent-created",
       priority: "high",
       status: "paused",
       concurrencyPolicy: "always_enqueue",
       catchUpPolicy: "enqueue_missed_with_cap",
     }), expect.any(Object));
-    expect(result.warnings).toContain(
+    expect(result.warnings).not.toContain(
       "Task monday-review assignee claudecoder is pending_approval; imported work was left unassigned.",
     );
     expect(routineSvc.createTrigger).toHaveBeenCalledTimes(2);
@@ -2489,7 +2489,7 @@ describe("company portability", () => {
     expect(agentSvc.create).not.toHaveBeenCalled();
   });
 
-  it("imports new agents through approval and adapter-config normalization", async () => {
+  it("imports new agents as active while preserving future hire approval settings", async () => {
     const portability = companyPortabilityService({} as any);
     const exported = await portability.exportBundle("company-1", {
       include: {
@@ -2549,7 +2549,10 @@ describe("company portability", () => {
       adapterConfig: expect.objectContaining({
         normalized: true,
       }),
-      status: "pending_approval",
+      status: "idle",
+    }));
+    expect(companySvc.create).toHaveBeenCalledWith(expect.objectContaining({
+      requireBoardApprovalForNewAgents: true,
     }));
   });
 

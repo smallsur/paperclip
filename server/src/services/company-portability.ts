@@ -4209,13 +4209,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           continue;
         }
 
-        const requiresApproval =
-          typeof targetCompany.requireBoardApprovalForNewAgents === "boolean"
-            ? targetCompany.requireBoardApprovalForNewAgents
-            : include.company
-              ? (sourceManifest.company?.requireBoardApprovalForNewAgents ?? true)
-              : true;
-        const createdStatus = requiresApproval ? "pending_approval" : "idle";
+        const createdStatus = "idle";
         let created = await agents.create(targetCompany.id, {
           ...patch,
           status: createdStatus,
