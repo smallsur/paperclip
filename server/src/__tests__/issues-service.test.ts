@@ -24,7 +24,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import { clampIssueListLimit, ISSUE_LIST_MAX_LIMIT, issueService } from "../services/issues.ts";
-import { buildProjectMentionHref, MAX_ISSUE_REQUEST_DEPTH } from "@paperclipai/shared";
+import { buildProjectMentionHref, CONFERENCE_ROOM_ORIGIN_KIND, MAX_ISSUE_REQUEST_DEPTH } from "@paperclipai/shared";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -1074,6 +1074,49 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
 
     expect(result?.description).toHaveLength(1200);
     expect(result?.description?.endsWith("—")).toBe(true);
+  });
+
+  it("excludes conference room issues from ordinary lists unless the origin is explicit", async () => {
+    const companyId = randomUUID();
+    const manualIssueId = randomUUID();
+    const conferenceIssueId = randomUUID();
+    const ceoAgentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values([
+      {
+        id: manualIssueId,
+        companyId,
+        title: "Ordinary task",
+        status: "todo",
+        priority: "medium",
+        originKind: "manual",
+      },
+      {
+        id: conferenceIssueId,
+        companyId,
+        title: "New chat",
+        status: "todo",
+        priority: "medium",
+        originKind: CONFERENCE_ROOM_ORIGIN_KIND,
+        originId: ceoAgentId,
+      },
+    ]);
+
+    const ordinary = await svc.list(companyId);
+    expect(ordinary.map((issue) => issue.id)).toEqual([manualIssueId]);
+
+    const conference = await svc.list(companyId, {
+      originKind: CONFERENCE_ROOM_ORIGIN_KIND,
+      originId: ceoAgentId,
+    });
+    expect(conference.map((issue) => issue.id)).toEqual([conferenceIssueId]);
   });
 });
 

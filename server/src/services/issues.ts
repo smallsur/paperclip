@@ -33,7 +33,13 @@ import type {
   IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
 } from "@paperclipai/shared";
-import { clampIssueRequestDepth, extractAgentMentionIds, extractProjectMentionIds, isUuidLike } from "@paperclipai/shared";
+import {
+  CONFERENCE_ROOM_ORIGIN_KIND,
+  clampIssueRequestDepth,
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  isUuidLike,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -2199,6 +2205,9 @@ export function issueService(db: Db) {
       if (filters?.excludeRoutineExecutions && !filters?.originKind && !filters?.originId) {
         conditions.push(ne(issues.originKind, "routine_execution"));
       }
+      if (!filters?.originKind && !filters?.originId) {
+        conditions.push(ne(issues.originKind, CONFERENCE_ROOM_ORIGIN_KIND));
+      }
       conditions.push(isNull(issues.hiddenAt));
 
       const priorityOrder = sql`CASE ${issues.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
@@ -2309,6 +2318,7 @@ export function issueService(db: Db) {
       const conditions = [
         eq(issues.companyId, companyId),
         isNull(issues.hiddenAt),
+        ne(issues.originKind, CONFERENCE_ROOM_ORIGIN_KIND),
         unreadForUserCondition(companyId, userId),
       ];
       if (status) {

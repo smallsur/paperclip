@@ -1770,6 +1770,8 @@ async function buildPaperclipWakePayload(input: {
         title: string;
         status: string;
         priority: string;
+        originKind?: string | null;
+        originId?: string | null;
       }
     | null;
 }) {
@@ -1787,6 +1789,8 @@ async function buildPaperclipWakePayload(input: {
             title: issues.title,
             status: issues.status,
             priority: issues.priority,
+            originKind: issues.originKind,
+            originId: issues.originId,
           })
           .from(issues)
           .where(and(eq(issues.id, issueId), eq(issues.companyId, input.companyId)))
@@ -1867,6 +1871,8 @@ async function buildPaperclipWakePayload(input: {
           title: issueSummary.title,
           status: issueSummary.status,
           priority: issueSummary.priority,
+          originKind: issueSummary.originKind ?? null,
+          originId: issueSummary.originId ?? null,
         }
       : null,
     childIssueSummaries: Array.isArray(input.contextSnapshot.childIssueSummaries)
@@ -2260,6 +2266,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         description: issues.description,
         status: issues.status,
         priority: issues.priority,
+        originKind: issues.originKind,
+        originId: issues.originId,
         projectId: issues.projectId,
         projectWorkspaceId: issues.projectWorkspaceId,
         executionWorkspaceId: issues.executionWorkspaceId,
@@ -5025,6 +5033,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           status: issueContext.status,
           priority: issueContext.priority,
           description: issueContext.description,
+          originKind: issueContext.originKind,
+          originId: issueContext.originId,
           projectId: issueContext.projectId,
           projectWorkspaceId: issueContext.projectWorkspaceId,
           executionWorkspaceId: issueContext.executionWorkspaceId,
@@ -5056,6 +5066,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
             title: issueRef.title,
             status: issueRef.status,
             priority: issueRef.priority,
+            originKind: issueRef.originKind,
+            originId: issueRef.originId,
           }
         : null,
     });

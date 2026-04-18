@@ -26,6 +26,7 @@ import { ApprovalDetail } from "./pages/ApprovalDetail";
 import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
+import { ConferenceRoom } from "./pages/ConferenceRoom";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
 import { CompanyAccess } from "./pages/CompanyAccess";
@@ -126,6 +127,10 @@ function boardRoutes() {
       <Route path="inbox/requests" element={<JoinRequestQueue />} />
       <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />
       <Route path="u/:userSlug" element={<UserProfile />} />
+      <Route path="conference" element={<ConferenceRoom />} />
+      <Route path="conference/new" element={<ConferenceRoom />} />
+      <Route path="conference/history" element={<ConferenceRoom />} />
+      <Route path="conference/:chatRef" element={<ConferenceRoom />} />
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="instance/settings/adapters" element={<AdapterManager />} />
       <Route path=":pluginRoutePath" element={<PluginPage />} />
@@ -282,6 +287,10 @@ export function App() {
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
+          <Route path="conference" element={<UnprefixedBoardRedirect />} />
+          <Route path="conference/new" element={<UnprefixedBoardRedirect />} />
+          <Route path="conference/history" element={<UnprefixedBoardRedirect />} />
+          <Route path="conference/:chatRef" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />
           <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />

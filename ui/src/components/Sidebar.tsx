@@ -12,6 +12,7 @@ import {
   Repeat,
   GitBranch,
   Settings,
+  MessageCircle,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -88,6 +89,7 @@ export function Sidebar() {
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
           />
+          <SidebarNavItem to="/conference" label="Conference Room" icon={MessageCircle} />
           <PluginSlotOutlet
             slotTypes={["sidebar"]}
             context={pluginContext}

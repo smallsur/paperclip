@@ -181,11 +181,13 @@ export type IssueThreadInteractionContinuationPolicy =
 export const ISSUE_ORIGIN_KINDS = [
   "manual",
   "routine_execution",
+  "conference_room",
   "stale_active_run_evaluation",
   "harness_liveness_escalation",
   "issue_productivity_review",
   "stranded_issue_recovery",
 ] as const;
+export const CONFERENCE_ROOM_ORIGIN_KIND = "conference_room" as const;
 export type BuiltInIssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 export type PluginIssueOriginKind = `plugin:${string}`;
 export type IssueOriginKind = BuiltInIssueOriginKind | PluginIssueOriginKind;

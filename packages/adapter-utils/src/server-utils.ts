@@ -270,6 +270,8 @@ type PaperclipWakeIssue = {
   title: string | null;
   status: string | null;
   priority: string | null;
+  originKind: string | null;
+  originId: string | null;
 };
 
 type PaperclipWakeExecutionPrincipal = {
@@ -373,6 +375,8 @@ function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null 
   const title = asString(issue.title, "").trim() || null;
   const status = asString(issue.status, "").trim() || null;
   const priority = asString(issue.priority, "").trim() || null;
+  const originKind = asString(issue.originKind, "").trim() || null;
+  const originId = asString(issue.originId, "").trim() || null;
   if (!id && !identifier && !title) return null;
   return {
     id,
@@ -380,6 +384,8 @@ function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null 
     title,
     status,
     priority,
+    originKind,
+    originId,
   };
 }
 
@@ -752,6 +758,20 @@ export function renderPaperclipWakePrompt(
       "",
       "The harness already checked out this issue for the current run.",
       "Do not call `/api/issues/{id}/checkout` again unless you intentionally switch to a different task.",
+      "",
+    );
+  }
+
+  if (normalized.issue?.originKind === "conference_room") {
+    lines.push(
+      "",
+      "## Conference Room Mode",
+      "",
+      "This issue is a board chat with you, not a normal execution task.",
+      "Answer the board directly by posting an issue comment on this same issue.",
+      "Do not run normal inbox or assignment triage for this wake, and do not delegate unless the board explicitly asks you to create or assign work.",
+      "Keep the reply conversational, concise, and useful to the board.",
+      "If the issue title is still `New chat`, update it to a short descriptive conversation title before or alongside your first substantive reply.",
       "",
     );
   }

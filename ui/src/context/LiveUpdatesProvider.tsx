@@ -186,7 +186,13 @@ function resolveVisibleIssueRouteContext(
 
   const relativePath = toCompanyRelativePath(pathname);
   const segments = relativePath.split("/").filter(Boolean);
-  if (segments[0] !== "issues" || !segments[1]) return null;
+  const isIssueRoute = segments[0] === "issues" && !!segments[1];
+  const isConferenceRoute =
+    segments[0] === "conference" &&
+    !!segments[1] &&
+    segments[1] !== "new" &&
+    segments[1] !== "history";
+  if (!isIssueRoute && !isConferenceRoute) return null;
 
   const issueRef = decodeURIComponent(segments[1]);
   const issue = queryClient.getQueryData<Issue>(queryKeys.issues.detail(issueRef)) ?? null;

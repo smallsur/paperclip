@@ -63,6 +63,11 @@ export const queryKeys = {
     activeRun: (issueId: string) => ["issues", "active-run", issueId] as const,
     workProducts: (issueId: string) => ["issues", "work-products", issueId] as const,
   },
+  conferenceRoom: {
+    target: (companyId: string) => ["conference-room", companyId, "target"] as const,
+    chats: (companyId: string, targetAgentId?: string | null) =>
+      ["conference-room", companyId, "chats", targetAgentId ?? "__default__"] as const,
+  },
   routines: {
     list: (companyId: string) => ["routines", companyId] as const,
     detail: (id: string) => ["routines", "detail", id] as const,

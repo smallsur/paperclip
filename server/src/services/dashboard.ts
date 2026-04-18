@@ -1,6 +1,7 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
+import { CONFERENCE_ROOM_ORIGIN_KIND } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 
@@ -43,7 +44,7 @@ export function dashboardService(db: Db) {
       const taskRows = await db
         .select({ status: issues.status, count: sql<number>`count(*)` })
         .from(issues)
-        .where(eq(issues.companyId, companyId))
+        .where(and(eq(issues.companyId, companyId), ne(issues.originKind, CONFERENCE_ROOM_ORIGIN_KIND)))
         .groupBy(issues.status);
 
       const pendingApprovals = await db
