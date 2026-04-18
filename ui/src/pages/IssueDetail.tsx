@@ -2044,6 +2044,7 @@ export function IssueDetail() {
   const showInboxToolbar = isMobile && isFromInbox;
   const archivePending = archiveFromInbox.isPending;
   const issueHidden = !!issue?.hiddenAt;
+  const canArchiveFromInbox = isFromInbox && !!issue?.id && !issueHidden;
 
   useEffect(() => {
     if (!showInboxToolbar) {
@@ -2291,6 +2292,20 @@ export function IssueDetail() {
           )}
 
           <div className="hidden md:flex items-center md:ml-auto shrink-0">
+            {canArchiveFromInbox && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => {
+                  if (!archivePending && issue?.id) archiveFromInbox.mutate(issue.id);
+                }}
+                disabled={archivePending}
+                title="Archive from inbox"
+                aria-label="Archive from inbox"
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-xs"
