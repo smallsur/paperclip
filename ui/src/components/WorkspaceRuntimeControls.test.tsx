@@ -104,7 +104,15 @@ describe("buildWorkspaceRuntimeControlSections", () => {
         runtimeServiceId: null,
       }),
     ]);
-    expect(sections.otherServices).toEqual([]);
+    expect(sections.otherServices).toEqual([
+      expect.objectContaining({
+        title: "web",
+        statusLabel: "stopped",
+        command: "pnpm dev",
+        runtimeServiceId: "service-web",
+        disabledReason: "This runtime service no longer matches a configured workspace command.",
+      }),
+    ]);
   });
 
   it("surfaces running stale runtime services separately from updated commands", () => {
