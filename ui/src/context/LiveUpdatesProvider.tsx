@@ -686,6 +686,7 @@ function invalidateActivityQueries(
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(ref), ...invalidationOptions });
         if (action === "issue.comment_added") {
           queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(ref), ...invalidationOptions });
+          queryClient.invalidateQueries({ queryKey: queryKeys.conferenceRoom.comments(ref), ...invalidationOptions });
         }
         if (action?.startsWith("issue.thread_interaction_")) {
           queryClient.invalidateQueries({ queryKey: queryKeys.issues.interactions(ref), ...invalidationOptions });

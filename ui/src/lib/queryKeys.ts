@@ -67,6 +67,7 @@ export const queryKeys = {
     target: (companyId: string) => ["conference-room", companyId, "target"] as const,
     chats: (companyId: string, targetAgentId?: string | null) =>
       ["conference-room", companyId, "chats", targetAgentId ?? "__default__"] as const,
+    comments: (issueRef: string) => ["conference-room", "comments", issueRef] as const,
   },
   routines: {
     list: (companyId: string) => ["routines", companyId] as const,

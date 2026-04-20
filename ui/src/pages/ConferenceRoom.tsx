@@ -128,7 +128,7 @@ export function ConferenceRoom() {
   const issueQueryRef = chatRef && chatRef !== "new" && !isHistoryRoute ? chatRef : (issueId ?? "conference-room-new");
 
   const { data: comments = [] } = useQuery({
-    queryKey: issueId ? queryKeys.issues.comments(issueQueryRef) : ["issues", "comments", "conference-room-new"],
+    queryKey: issueId ? queryKeys.conferenceRoom.comments(issueQueryRef) : ["conference-room", "comments", "new"],
     queryFn: () => issuesApi.listComments(issueId!, { order: "asc", limit: 200 }),
     enabled: !!issueId,
   });
@@ -182,7 +182,7 @@ export function ConferenceRoom() {
     const refs = new Set([nextIssueId, nextIdentifier, chatRef, issueId].filter(Boolean) as string[]);
     for (const ref of refs) {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(ref) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(ref) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.conferenceRoom.comments(ref) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(ref) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(ref) });
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(ref) });
@@ -201,9 +201,9 @@ export function ConferenceRoom() {
         queryClient.setQueryData(queryKeys.issues.detail(nextIssue.identifier), nextIssue);
       }
       if (comment) {
-        queryClient.setQueryData(queryKeys.issues.comments(nextIssue.id), [comment]);
+        queryClient.setQueryData(queryKeys.conferenceRoom.comments(nextIssue.id), [comment]);
         if (nextIssue.identifier) {
-          queryClient.setQueryData(queryKeys.issues.comments(nextIssue.identifier), [comment]);
+          queryClient.setQueryData(queryKeys.conferenceRoom.comments(nextIssue.identifier), [comment]);
         }
       }
       invalidateConferenceRoom(nextIssue.id, nextIssue.identifier);
@@ -240,7 +240,7 @@ export function ConferenceRoom() {
       if (context?.optimisticId) {
         setOptimisticComments((current) => current.filter((entry) => entry.clientId !== context.optimisticId));
       }
-      queryClient.setQueryData<IssueComment[]>(queryKeys.issues.comments(issueQueryRef), (current) => {
+      queryClient.setQueryData<IssueComment[]>(queryKeys.conferenceRoom.comments(issueQueryRef), (current) => {
         const existing = current ?? [];
         if (existing.some((entry) => entry.id === comment.id)) return existing;
         return [...existing, comment].sort(
