@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Agent } from "@paperclipai/shared";
-import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, GitBranch, ListChecks, Loader2, MessageSquareQuote, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, GitBranch, ListChecks, Loader2, MessageSquareQuote, XCircle } from "lucide-react";
 import { Link } from "@/lib/router";
 import { formatAssigneeUserLabel } from "../lib/assignees";
 import {
@@ -20,6 +20,7 @@ import { cn, formatDateTime, formatShortDate } from "../lib/utils";
 import { MarkdownBody } from "./MarkdownBody";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
+import { PriorityIcon } from "./PriorityIcon";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -78,6 +79,10 @@ function statusLabel(status: IssueThreadInteraction["status"]) {
   }
 }
 
+function interactionKindLabel(kind: IssueThreadInteraction["kind"]) {
+  return kind === "suggest_tasks" ? "Suggested tasks" : "Ask user questions";
+}
+
 function statusIcon(status: IssueThreadInteraction["status"]) {
   switch (status) {
     case "accepted":
@@ -114,7 +119,7 @@ function statusClasses(status: IssueThreadInteraction["status"]) {
       };
     default:
       return {
-        shell: "border-sky-300/80 bg-card",
+        shell: "border-border bg-card",
         badge: "border-sky-400/60 bg-sky-100/85 text-sky-950",
       };
   }
@@ -132,7 +137,7 @@ function TaskField({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]",
+        "inline-flex items-center rounded-sm border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em]",
         tone === "default"
           ? "border-border/70 bg-background/80 text-foreground"
           : "border-border/60 bg-background/60 text-muted-foreground",
@@ -193,44 +198,47 @@ function TaskTreeNode({
   );
 
   return (
-    <div className={cn("space-y-3", depth > 0 && "relative pl-5")}>
+    <div className={cn("space-y-2", depth > 0 && "relative pl-6")}>
       {depth > 0 ? (
         <span
           aria-hidden="true"
-          className="absolute left-0 top-0 h-full w-px bg-border"
+          className="absolute left-2 top-0 h-full w-px bg-border"
         />
       ) : null}
       <div
         className={cn(
-          "rounded-2xl border border-border/70 bg-background/80 p-4 shadow-[0_18px_48px_rgba(15,23,42,0.08)]",
-          depth > 0 && "relative border-dashed shadow-none before:absolute before:-left-5 before:top-7 before:h-px before:w-5 before:bg-border",
+          "rounded-md border border-border/70 bg-muted/35 px-3 py-3 shadow-none",
+          depth > 0 && "relative before:absolute before:-left-4 before:top-5 before:h-px before:w-4 before:bg-border",
         )}
       >
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-2.5">
               {showSelection ? (
                 <Checkbox
                   checked={isSelected}
                   onCheckedChange={(checked) => onToggleSelection?.(node, checked === true)}
                   aria-label={`Include ${node.task.title}`}
-                  className="mt-1"
+                  className="mt-0.5"
                 />
               ) : null}
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-sky-300/70 bg-sky-100/80 text-sky-900">
-                <Sparkles className="h-3.5 w-3.5" />
-              </span>
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  {depth > 0 ? (
-                    <span className="rounded-full border border-border/70 bg-muted/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                      Child task
-                    </span>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {node.task.priority ? (
+                    <PriorityIcon
+                      priority={node.task.priority}
+                      className="mt-px"
+                    />
                   ) : null}
-                  <div className="text-sm font-medium text-foreground">
+                  <div className="min-w-0 truncate text-sm font-medium text-foreground">
                     {node.task.title}
                   </div>
                 </div>
+                {depth > 0 ? (
+                  <div className="mt-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                    Child task
+                  </div>
+                ) : null}
                 {node.task.description ? (
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
                     {node.task.description}
@@ -243,22 +251,19 @@ function TaskTreeNode({
           {createdTask?.issueId ? (
             <Link
               to={`/issues/${createdTask.identifier ?? createdTask.issueId}`}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-400/50 bg-emerald-100/80 px-2.5 py-1 text-[11px] font-medium text-emerald-950 transition-colors hover:bg-emerald-200/80"
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-emerald-400/50 bg-emerald-100/80 px-2.5 py-1 text-[11px] font-medium text-emerald-950 transition-colors hover:bg-emerald-200/80"
             >
               {createdTask.identifier ?? createdTask.issueId.slice(0, 8)}
               <ChevronRight className="h-3 w-3" />
             </Link>
           ) : isSkipped ? (
-            <span className="inline-flex items-center rounded-full border border-amber-300/70 bg-amber-100/80 px-2.5 py-1 text-[11px] font-medium text-amber-950">
+            <span className="inline-flex shrink-0 items-center rounded-sm border border-amber-300/70 bg-amber-100/80 px-2.5 py-1 text-[11px] font-medium text-amber-950">
               Skipped
             </span>
           ) : null}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          {node.task.priority ? (
-            <TaskField label="Priority" value={node.task.priority} />
-          ) : null}
           {hasExplicitAssignee ? (
             <TaskField label="Assignee" value={assigneeLabel} />
           ) : null}
@@ -274,7 +279,7 @@ function TaskTreeNode({
         </div>
 
         {hiddenChildCount > 0 ? (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50/85 px-3 py-2 text-xs text-amber-900">
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300/60 bg-amber-50/85 px-3 py-2 text-xs text-amber-900">
             <GitBranch className="h-3.5 w-3.5 shrink-0" />
             <span>
               {hiddenChildCount === 1
@@ -286,7 +291,7 @@ function TaskTreeNode({
       </div>
 
       {visibleChildren.length > 0 ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {visibleChildren.map((child) => (
             <TaskTreeNode
               key={child.task.clientKey}
@@ -427,10 +432,6 @@ function SuggestTasksCard({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 font-medium uppercase tracking-[0.16em] text-foreground/70">
-          <Sparkles className="h-3 w-3" />
-          Suggested tasks
-        </span>
         <span>{totalTasks === 1 ? "1 draft issue" : `${totalTasks} draft issues`}</span>
         {interaction.payload.defaultParentId ? (
           <TaskField label="Default parent" value={interaction.payload.defaultParentId} tone="subtle" />
@@ -455,7 +456,7 @@ function SuggestTasksCard({
       </div>
 
       {interaction.status === "accepted" ? (
-        <div className="rounded-2xl border border-emerald-300/60 bg-emerald-50/85 px-4 py-3 text-sm text-emerald-950">
+        <div className="rounded-md border border-emerald-300/60 bg-emerald-50/85 px-4 py-3 text-sm text-emerald-950">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
             Resolution summary
           </div>
@@ -468,7 +469,7 @@ function SuggestTasksCard({
       ) : null}
 
       {interaction.status === "rejected" ? (
-        <div className="rounded-2xl border border-rose-300/60 bg-rose-50/85 px-4 py-3 text-sm text-rose-950">
+        <div className="rounded-md border border-rose-300/60 bg-rose-50/85 px-4 py-3 text-sm text-rose-950">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700">
             Rejection reason
           </div>
@@ -482,57 +483,59 @@ function SuggestTasksCard({
       ) : null}
 
       {interaction.status === "pending" ? (
-        <div className="rounded-2xl border border-border/70 bg-background/75 p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>
-              {selectedCount === totalTasks
-                ? `All ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`
-                : `${selectedCount} of ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`}
-            </span>
-            {selectedCount < totalTasks ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>
-                {totalTasks - selectedCount} will be skipped if you accept this interaction.
+                {selectedCount === totalTasks
+                  ? `All ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`
+                  : `${selectedCount} of ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`}
               </span>
-            ) : null}
-          </div>
+              {selectedCount < totalTasks ? (
+                <span>
+                  {totalTasks - selectedCount} will be skipped if you accept this interaction.
+                </span>
+              ) : null}
+            </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              disabled={!onAcceptInteraction || working !== null || selectedCount === 0}
-              onClick={() => void handleAccept()}
-            >
-              {working === "accept" ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Accepting...
-                </>
-              ) : (
-                selectedCount === totalTasks ? "Accept drafts" : "Accept selected drafts"
-              )}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!onRejectInteraction || working !== null}
-              onClick={() => setRejecting((current) => !current)}
-            >
-              Reject
-            </Button>
-            {selectedCount < totalTasks ? (
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
               <Button
                 size="sm"
-                variant="ghost"
-                disabled={working !== null}
-                onClick={() => setSelectedClientKeys(new Set(interaction.payload.tasks.map((task) => task.clientKey)))}
+                disabled={!onAcceptInteraction || working !== null || selectedCount === 0}
+                onClick={() => void handleAccept()}
               >
-                Reset selection
+                {working === "accept" ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Accepting...
+                  </>
+                ) : (
+                  selectedCount === totalTasks ? "Accept drafts" : "Accept selected drafts"
+                )}
               </Button>
-            ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!onRejectInteraction || working !== null}
+                onClick={() => setRejecting((current) => !current)}
+              >
+                Reject
+              </Button>
+              {selectedCount < totalTasks ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={working !== null}
+                  onClick={() => setSelectedClientKeys(new Set(interaction.payload.tasks.map((task) => task.clientKey)))}
+                >
+                  Reset selection
+                </Button>
+              ) : null}
+            </div>
           </div>
 
           {rejecting ? (
-            <div className="mt-3 space-y-3">
+            <div className="space-y-3">
               <Textarea
                 value={rejectReason}
                 onChange={(event) => setRejectReason(event.target.value)}
@@ -827,16 +830,18 @@ export function IssueThreadInteractionCard({
       : null;
 
   return (
-    <div className={cn("rounded-[28px] border p-5 shadow-[0_28px_70px_rgba(15,23,42,0.10)]", styles.shell)}>
+    <div className={cn("rounded-md border p-5 shadow-[0_18px_48px_rgba(15,23,42,0.08)]", styles.shell)}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1 basis-64">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]", styles.badge)}>
+            <span className={cn("inline-flex items-center gap-1 rounded-sm border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]", styles.badge)}>
               <StatusIcon className="h-3.5 w-3.5" />
+              {interactionKindLabel(interaction.kind)}
+              <span className="text-current/60">/</span>
               {statusLabel(interaction.status)}
             </span>
             {interaction.continuationPolicy === "wake_assignee" ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/70">
+              <span className="inline-flex items-center gap-1 rounded-sm border border-border/70 bg-background/80 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-foreground/70">
                 <ListChecks className="h-3.5 w-3.5" />
                 Wakes assignee
               </span>
@@ -858,7 +863,7 @@ export function IssueThreadInteractionCard({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="rounded-2xl border border-border/70 bg-background/80 px-3 py-2 text-right text-xs text-muted-foreground">
+            <div className="rounded-md border border-border/70 bg-background/80 px-3 py-2 text-right text-xs text-muted-foreground">
               <div className="font-medium text-foreground">{formatShortDate(interaction.createdAt)}</div>
               <div>proposed by {createdByLabel}</div>
             </div>

@@ -171,6 +171,86 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+export const SuggestedTasksPending: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending suggested tasks"
+        description="Draft issues are selectable before they become real issues."
+      >
+        <InteractiveSuggestedTasksCard />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const SuggestedTasksAccepted: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Accepted suggested tasks"
+        description="Created issues are linked back to their original draft rows."
+      >
+        <IssueThreadInteractionCard
+          interaction={acceptedSuggestedTasksInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const SuggestedTasksRejected: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Rejected suggested tasks"
+        description="The declined draft stays visible with its rejection note."
+      >
+        <IssueThreadInteractionCard
+          interaction={rejectedSuggestedTasksInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const AskUserQuestionsPending: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Pending question form"
+        description="Single- and multi-select questions remain local until submitted."
+      >
+        <InteractiveAskUserQuestionsCard />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
+export const AskUserQuestionsAnswered: Story = {
+  render: () => (
+    <StoryFrame>
+      <ScenarioCard
+        title="Answered question form"
+        description="Selected answers and the submitted summary remain attached to the thread."
+      >
+        <IssueThreadInteractionCard
+          interaction={answeredAskUserQuestionsInteraction}
+          agentMap={storybookAgentMap}
+          currentUserId={issueThreadInteractionFixtureMeta.currentUserId}
+          userLabelMap={boardUserLabels}
+        />
+      </ScenarioCard>
+    </StoryFrame>
+  ),
+};
+
 export const ReviewSurface: Story = {
   render: () => (
     <StoryFrame>
