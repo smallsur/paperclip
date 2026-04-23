@@ -315,6 +315,13 @@ export interface ServerAdapterModule {
   supportsLocalAgentJwt?: boolean;
   models?: AdapterModel[];
   listModels?: () => Promise<AdapterModel[]>;
+  /**
+   * Optional explicit refresh hook for model discovery.
+   * Use this when the adapter caches discovered models and needs a bypass path
+   * so the UI can fetch newly released models without waiting for cache expiry
+   * or a Paperclip code update.
+   */
+  refreshModels?: () => Promise<AdapterModel[]>;
   agentConfigurationDoc?: string;
   /**
    * Optional lifecycle hook when an agent is approved/hired (join-request or hire_agent approval).
