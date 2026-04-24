@@ -57,14 +57,14 @@ import { KanbanBoard } from "./KanbanBoard";
 import { buildIssueTree, countDescendants } from "../lib/issue-tree";
 import { buildSubIssueDefaultsForViewer } from "../lib/subIssueDefaults";
 import { statusBadge } from "../lib/status-colors";
-import type { Issue, Project } from "@paperclipai/shared";
+import { ISSUE_STATUSES, type Issue, type Project } from "@paperclipai/shared";
 const ISSUE_SEARCH_DEBOUNCE_MS = 250;
 const ISSUE_SEARCH_RESULT_LIMIT = 200;
 const ISSUE_BOARD_COLUMN_RESULT_LIMIT = 200;
 const INITIAL_ISSUE_ROW_RENDER_LIMIT = 150;
 const ISSUE_ROW_RENDER_BATCH_SIZE = 150;
 const ISSUE_ROW_RENDER_BATCH_DELAY_MS = 0;
-const boardIssueStatuses = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
+const boardIssueStatuses = ISSUE_STATUSES;
 
 /* ── View state ── */
 
@@ -621,6 +621,13 @@ export function IssuesList({
     if (merged.size > 0) return [...merged.values()];
     return isPending ? issues : [];
   }, [boardIssueQueries, issues, searchWithinLoadedIssues, viewState.viewMode]);
+  const boardColumnLimitReached = useMemo(
+    () =>
+      viewState.viewMode === "board" &&
+      !searchWithinLoadedIssues &&
+      boardIssueQueries.some((query) => (query.data?.length ?? 0) === ISSUE_BOARD_COLUMN_RESULT_LIMIT),
+    [boardIssueQueries, searchWithinLoadedIssues, viewState.viewMode],
+  );
 
   const filtered = useMemo(() => {
     const useRemoteSearch = normalizedIssueSearch.length > 0 && !searchWithinLoadedIssues;
@@ -931,6 +938,11 @@ export function IssuesList({
       {!searchWithinLoadedIssues && normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
         <p className="text-xs text-muted-foreground">
           Showing up to {ISSUE_SEARCH_RESULT_LIMIT} matches. Refine the search to narrow further.
+        </p>
+      )}
+      {boardColumnLimitReached && (
+        <p className="text-xs text-muted-foreground">
+          Some board columns are showing up to {ISSUE_BOARD_COLUMN_RESULT_LIMIT} issues. Refine filters or search to reveal the rest.
         </p>
       )}
       {!isLoading && filtered.length === 0 && viewState.viewMode === "list" && (
