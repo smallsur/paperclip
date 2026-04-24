@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
@@ -99,13 +100,19 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     });
   }
 
-  async function activeRun(input: { companyId: string; agentId: string; issueId: string; status?: string }) {
+  async function activeRun(input: { companyId: string; agentId: string; issueId: string; status?: string; current?: boolean }) {
+    const runId = randomUUID();
     await db.insert(heartbeatRuns).values({
+      id: runId,
       companyId: input.companyId,
       agentId: input.agentId,
       status: input.status ?? "running",
       contextSnapshot: { issueId: input.issueId },
     });
+    if (input.current !== false) {
+      await db.update(issues).set({ executionRunId: runId }).where(eq(issues.id, input.issueId));
+    }
+    return runId;
   }
 
   it("classifies a blocked parent as covered when its child has a running execution path", async () => {
@@ -122,7 +129,7 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     await block({ companyId, blockerIssueId: childId, blockedIssueId: parentId });
     await activeRun({ companyId, agentId, issueId: childId });
 
-    const [parent] = await svc.list(companyId, { status: "blocked" });
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
 
     expect(parent?.blockerAttention).toMatchObject({
       state: "covered",
@@ -156,7 +163,7 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     await block({ companyId, blockerIssueId: idleBlockerId, blockedIssueId: parentId });
     await activeRun({ companyId, agentId, issueId: activeChildId });
 
-    const [parent] = await svc.list(companyId, { status: "blocked" });
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
 
     expect(parent?.blockerAttention).toMatchObject({
       state: "needs_attention",
@@ -183,7 +190,7 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     await block({ companyId, blockerIssueId: leafId, blockedIssueId: blockerId });
     await activeRun({ companyId, agentId, issueId: leafId });
 
-    const [parent] = await svc.list(companyId, { status: "blocked" });
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
 
     expect(parent?.blockerAttention).toMatchObject({
       state: "covered",
@@ -209,7 +216,7 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     await block({ companyId, blockerIssueId: blockerId, blockedIssueId: parentId });
     await activeRun({ companyId: other.companyId, agentId: other.agentId, issueId: blockerId });
 
-    const [parent] = await svc.list(companyId, { status: "blocked" });
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
 
     expect(parent?.blockerAttention).toMatchObject({
       state: "needs_attention",
@@ -218,6 +225,56 @@ describeEmbeddedPostgres("issue blocker attention", () => {
       coveredBlockerCount: 0,
       attentionBlockerCount: 1,
       sampleBlockerIdentifier: "PBS-2",
+    });
+  });
+
+  it("does not cover a blocker from a stale run the issue no longer owns", async () => {
+    const { companyId, agentId } = await createCompany("PBX");
+    const parentId = await insertIssue({ companyId, identifier: "PBX-1", title: "Parent", status: "blocked" });
+    const blockerId = await insertIssue({
+      companyId,
+      identifier: "PBX-2",
+      title: "Previously running blocker",
+      status: "blocked",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: blockerId, blockedIssueId: parentId });
+    await activeRun({ companyId, agentId, issueId: blockerId, current: false });
+
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "needs_attention",
+      reason: "attention_required",
+      unresolvedBlockerCount: 1,
+      coveredBlockerCount: 0,
+      attentionBlockerCount: 1,
+      sampleBlockerIdentifier: "PBX-2",
+    });
+  });
+
+  it("does not treat a scheduled retry as actively covered work", async () => {
+    const { companyId, agentId } = await createCompany("PBY");
+    const parentId = await insertIssue({ companyId, identifier: "PBY-1", title: "Parent", status: "blocked" });
+    const blockerId = await insertIssue({
+      companyId,
+      identifier: "PBY-2",
+      title: "Retrying blocker",
+      status: "blocked",
+      assigneeAgentId: agentId,
+    });
+    await block({ companyId, blockerIssueId: blockerId, blockedIssueId: parentId });
+    await activeRun({ companyId, agentId, issueId: blockerId, status: "scheduled_retry" });
+
+    const parent = (await svc.list(companyId, { status: "blocked" })).find((issue) => issue.id === parentId);
+
+    expect(parent?.blockerAttention).toMatchObject({
+      state: "needs_attention",
+      reason: "attention_required",
+      unresolvedBlockerCount: 1,
+      coveredBlockerCount: 0,
+      attentionBlockerCount: 1,
+      sampleBlockerIdentifier: "PBY-2",
     });
   });
 });

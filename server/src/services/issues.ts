@@ -657,7 +657,7 @@ async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWith
 }
 
 const ACTIVE_RUN_STATUSES = ["queued", "running"];
-const BLOCKER_ATTENTION_ACTIVE_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
+const BLOCKER_ATTENTION_ACTIVE_RUN_STATUSES = ["queued", "running"];
 const BLOCKER_ATTENTION_ACTIVE_WAKE_STATUSES = ["queued", "deferred_issue_execution"];
 const BLOCKER_ATTENTION_MAX_DEPTH = 8;
 const BLOCKER_ATTENTION_MAX_NODES = 2000;
@@ -670,9 +670,16 @@ type IssueBlockerAttentionNode = {
   identifier: string | null;
   title: string;
   status: string;
+  executionRunId?: string | null;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
 };
+type IssueBlockerAttentionInputNode =
+  Pick<
+    IssueBlockerAttentionNode,
+    "id" | "companyId" | "parentId" | "identifier" | "title" | "status" | "assigneeAgentId" | "assigneeUserId"
+  >
+  & { executionRunId?: string | null };
 
 type IssueBlockerAttentionEdge = {
   issueId: string;
@@ -759,7 +766,7 @@ function appendBlockerAttentionEdges(
 async function listIssueBlockerAttentionMap(
   dbOrTx: any,
   companyId: string,
-  issueRows: Array<Pick<IssueBlockerAttentionNode, "id" | "companyId" | "parentId" | "identifier" | "title" | "status" | "assigneeAgentId" | "assigneeUserId">>,
+  issueRows: IssueBlockerAttentionInputNode[],
 ): Promise<Map<string, IssueBlockerAttention>> {
   const roots = issueRows.filter((row) => row.companyId === companyId && row.status === "blocked");
   const attentionMap = new Map<string, IssueBlockerAttention>();
@@ -790,6 +797,7 @@ async function listIssueBlockerAttentionMap(
           identifier: issues.identifier,
           title: issues.title,
           status: issues.status,
+          executionRunId: issues.executionRunId,
           assigneeAgentId: issues.assigneeAgentId,
           assigneeUserId: issues.assigneeUserId,
         })
@@ -814,6 +822,7 @@ async function listIssueBlockerAttentionMap(
           identifier: issues.identifier,
           title: issues.title,
           status: issues.status,
+          executionRunId: issues.executionRunId,
           assigneeAgentId: issues.assigneeAgentId,
           assigneeUserId: issues.assigneeUserId,
         })
@@ -848,6 +857,7 @@ async function listIssueBlockerAttentionMap(
           identifier: row.identifier,
           title: row.title,
           status: row.status,
+          executionRunId: row.executionRunId,
           assigneeAgentId: row.assigneeAgentId,
           assigneeUserId: row.assigneeUserId,
         });
@@ -866,23 +876,33 @@ async function listIssueBlockerAttentionMap(
   const nodeIds = [...nodesById.keys()];
   const activeIssueIds = new Set<string>();
   const agentIds = new Set<string>();
+  const issueIdByExecutionRunId = new Map<string, string>();
   for (const node of nodesById.values()) {
     if (node.assigneeAgentId) agentIds.add(node.assigneeAgentId);
+    if (node.executionRunId) issueIdByExecutionRunId.set(node.executionRunId, node.id);
   }
 
-  for (const chunk of chunkList(nodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
-    const runRowsPromise: Promise<IssueBlockerAttentionActivePathRow[]> = dbOrTx
+  for (const chunk of chunkList([...issueIdByExecutionRunId.keys()], ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+    const runRows: Array<{ id: string }> = await dbOrTx
       .select({
-        issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
+        id: heartbeatRuns.id,
       })
       .from(heartbeatRuns)
       .where(
         and(
           eq(heartbeatRuns.companyId, companyId),
           inArray(heartbeatRuns.status, BLOCKER_ATTENTION_ACTIVE_RUN_STATUSES),
-          inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, chunk),
+          inArray(heartbeatRuns.id, chunk),
         ),
       );
+
+    for (const row of runRows) {
+      const issueId = issueIdByExecutionRunId.get(row.id);
+      if (issueId) activeIssueIds.add(issueId);
+    }
+  }
+
+  for (const chunk of chunkList(nodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
     const wakeRowsPromise: Promise<IssueBlockerAttentionActivePathRow[]> = dbOrTx
       .select({
         issueId: sql<string | null>`${agentWakeupRequests.payload} ->> 'issueId'`,
@@ -896,11 +916,8 @@ async function listIssueBlockerAttentionMap(
           inArray(sql<string>`${agentWakeupRequests.payload} ->> 'issueId'`, chunk),
         ),
       );
-    const [runRows, wakeRows] = await Promise.all([
-      runRowsPromise,
-      wakeRowsPromise,
-    ]);
-    for (const row of [...runRows, ...wakeRows]) {
+    const wakeRows = await wakeRowsPromise;
+    for (const row of wakeRows) {
       if (row.issueId) activeIssueIds.add(row.issueId);
     }
   }
@@ -1985,7 +2002,7 @@ export function issueService(db: Db) {
 
     listBlockerAttention: async (
       companyId: string,
-      issueRows: Array<Pick<IssueBlockerAttentionNode, "id" | "companyId" | "parentId" | "identifier" | "title" | "status" | "assigneeAgentId" | "assigneeUserId">>,
+      issueRows: IssueBlockerAttentionInputNode[],
       dbOrTx: any = db,
     ) => {
       return listIssueBlockerAttentionMap(dbOrTx, companyId, issueRows);
