@@ -60,7 +60,8 @@ import { statusBadge } from "../lib/status-colors";
 import type { Issue, Project } from "@paperclipai/shared";
 const ISSUE_SEARCH_DEBOUNCE_MS = 250;
 const ISSUE_SEARCH_RESULT_LIMIT = 200;
-const INITIAL_ISSUE_ROW_RENDER_LIMIT = 150;
+const ISSUE_BOARD_COLUMN_RESULT_LIMIT = 200;
+const INITIAL_ISSUE_ROW_RENDER_LIMIT = 100;
 const ISSUE_ROW_RENDER_BATCH_SIZE = 150;
 const ISSUE_ROW_RENDER_BATCH_DELAY_MS = 0;
 
