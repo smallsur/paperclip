@@ -21,6 +21,10 @@ const mockSecretService = vi.hoisted(() => ({
   normalizeEnvBindingsForPersistence: vi.fn(),
 }));
 
+const mockEnvironmentService = vi.hoisted(() => ({
+  getById: vi.fn(),
+}));
+
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
@@ -32,6 +36,7 @@ vi.mock("../telemetry.js", () => ({
 }));
 
 vi.mock("../services/index.js", () => ({
+  environmentService: () => mockEnvironmentService,
   executionWorkspaceService: () => mockExecutionWorkspaceService,
   logActivity: mockLogActivity,
   projectService: () => mockProjectService,
@@ -57,6 +62,7 @@ function registerWorkspaceRouteMocks() {
   }));
 
   vi.doMock("../services/index.js", () => ({
+    environmentService: () => mockEnvironmentService,
     executionWorkspaceService: () => mockExecutionWorkspaceService,
     logActivity: mockLogActivity,
     projectService: () => mockProjectService,
@@ -186,6 +192,7 @@ describe.sequential("workspace runtime service route authorization", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnvironmentService.getById.mockResolvedValue(null);
     mockSecretService.normalizeEnvBindingsForPersistence.mockImplementation(async (_companyId, env) => env);
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.create.mockResolvedValue(buildProject());
