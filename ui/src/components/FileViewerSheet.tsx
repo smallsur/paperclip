@@ -37,6 +37,7 @@ import {
   useRequiredFileViewer,
   type FileViewerUrlState,
 } from "@/context/FileViewerContext";
+import { parseWorkspaceFileRef } from "@/lib/workspace-file-parser";
 import type {
   ResolvedWorkspaceResource,
   WorkspaceFileContent,
@@ -193,7 +194,12 @@ function FileViewerStateView({
 }
 
 interface OpenFilePromptProps {
-  onSubmit: (path: string, workspace: WorkspaceFileSelector) => void;
+  onSubmit: (
+    path: string,
+    workspace: WorkspaceFileSelector,
+    line: number | null,
+    column: number | null,
+  ) => void;
 }
 
 function OpenFilePrompt({ onSubmit }: OpenFilePromptProps) {
@@ -210,7 +216,12 @@ function OpenFilePrompt({ onSubmit }: OpenFilePromptProps) {
     event.preventDefault();
     const trimmed = value.trim();
     if (!trimmed) return;
-    onSubmit(trimmed, workspace);
+    const parsed = parseWorkspaceFileRef(trimmed);
+    if (parsed) {
+      onSubmit(parsed.path, workspace, parsed.line, parsed.column);
+      return;
+    }
+    onSubmit(trimmed, workspace, null, null);
   };
 
   return (
@@ -489,8 +500,13 @@ export function FileViewerSheet({
   );
 
   const handlePromptSubmit = useCallback(
-    (path: string, workspace: WorkspaceFileSelector) => {
-      viewer.open({ path, line: null, column: null, workspace });
+    (
+      path: string,
+      workspace: WorkspaceFileSelector,
+      line: number | null,
+      column: number | null,
+    ) => {
+      viewer.open({ path, line, column, workspace });
     },
     [viewer],
   );

@@ -17,7 +17,13 @@ export const workspaceFileRefSchema = z.object({
 });
 
 export const workspaceFileResourceQuerySchema = z.object({
-  path: z.string().min(1),
+  path: z
+    .string()
+    .min(1)
+    .refine((value) => !/[\x00-\x1f\x7f]/.test(value), {
+      message: "Workspace file path contains an invalid character",
+      params: { code: "invalid_path" },
+    }),
   workspace: workspaceFileSelectorSchema.optional(),
 });
 

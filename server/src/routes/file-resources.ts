@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ZodError } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
   workspaceFileResourceQuerySchema,
@@ -63,7 +64,18 @@ function limiterKey(companyId: string, actorId: string, issueId: string) {
 }
 
 function readQuery(query: unknown) {
-  const parsed = workspaceFileResourceQuerySchema.parse(query);
+  let parsed;
+  try {
+    parsed = workspaceFileResourceQuerySchema.parse(query);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      const refinement = error.errors.find(
+        (issue) => (issue as { params?: { code?: string } }).params?.code === "invalid_path",
+      );
+      if (refinement) throw unprocessable(refinement.message, { code: "invalid_path" });
+    }
+    throw error;
+  }
   return {
     path: parsed.path,
     workspace: parsed.workspace ?? "auto",

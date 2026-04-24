@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { activityLog, companies, executionWorkspaces, goals, issues, projects, projectWorkspaces, type Db } from "@paperclipai/db";
+import { activityLog, companies, createDb, executionWorkspaces, goals, issues, projects, projectWorkspaces, type Db } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { errorHandler } from "../middleware/index.js";
 import { createFileResourceLimiter, fileResourceRoutes, type WorkspaceFileResourceService } from "../routes/file-resources.js";
@@ -18,7 +18,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 
-const embeddedPostgresSupport = getEmbeddedPostgresTestSupport();
+const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 type TestGraph = {
@@ -157,11 +157,11 @@ describeEmbeddedPostgres("workspace file resources", () => {
 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-file-resources-");
-    db = tempDb.db;
+    db = createDb(tempDb.connectionString);
   }, 60_000);
 
   afterAll(async () => {
-    await tempDb?.stop();
+    await tempDb?.cleanup();
   });
 
   it("resolves and reads a project file without exposing absolute paths", async () => {
@@ -204,6 +204,34 @@ describeEmbeddedPostgres("workspace file resources", () => {
     expect(resolved.workspaceKind).toBe("project_workspace");
     expect(resolved.displayPath).toBe("README.md");
     expect(resolved.capabilities.preview).toBe(true);
+  });
+
+  it("rejects control characters in the path without crashing the audit log", async () => {
+    const { projectRoot, executionRoot } = await makeWorkspace();
+    const graph = await seedGraph(db, { projectRoot, executionRoot });
+
+    const app = createApp(db, {
+      type: "board",
+      userId: "board-user",
+      companyIds: [graph.companyId],
+      source: "session",
+      isInstanceAdmin: false,
+    });
+
+    const nullByte = await request(app)
+      .get(`/api/issues/${graph.issueId}/file-resources/content?workspace=project&path=foo%00bar.ts`);
+    expect(nullByte.status).toBe(422);
+    expect(nullByte.body?.details?.code).toBe("invalid_path");
+
+    const resolveNullByte = await request(app)
+      .get(`/api/issues/${graph.issueId}/file-resources/resolve?workspace=project&path=foo%00bar.ts`);
+    expect(resolveNullByte.status).toBe(422);
+    expect(resolveNullByte.body?.details?.code).toBe("invalid_path");
+
+    const otherControl = await request(app)
+      .get(`/api/issues/${graph.issueId}/file-resources/content?workspace=project&path=a%0Bb.ts`);
+    expect(otherControl.status).toBe(422);
+    expect(otherControl.body?.details?.code).toBe("invalid_path");
   });
 
   it("rejects traversal, encoded traversal, backslash traversal, and double-encoding without double-decoding", async () => {
