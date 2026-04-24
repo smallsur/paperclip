@@ -16,6 +16,7 @@ import type { PluginExternalObjectRecordSnapshot, PluginExternalObjectResolveRes
 import { notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity, type LogActivityInput } from "./activity-log.js";
+import { createGitHubExternalObjectProvider, type GitHubExternalObjectProviderOptions } from "./github-external-object-provider.js";
 import { publishLiveEvent } from "./live-events.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 
@@ -343,16 +344,22 @@ export function externalObjectService(
     detectors?: ExternalObjectDetector[];
     resolvers?: ExternalObjectResolver[];
     pluginWorkerManager?: PluginWorkerManager;
+    github?: GitHubExternalObjectProviderOptions | false;
   } = {},
 ) {
+  const githubProvider = opts.github === false ? null : createGitHubExternalObjectProvider(db, opts.github);
   const pluginProviderDetector = opts.pluginWorkerManager
     ? createPluginProviderDetector(db, opts.pluginWorkerManager)
     : null;
   const detectorRegistry = createExternalObjectDetectorRegistry([
     ...(pluginProviderDetector ? [pluginProviderDetector] : []),
     ...(opts.detectors ?? []),
+    ...(githubProvider ? [githubProvider.detector] : []),
   ]);
-  const resolverRegistry = createExternalObjectResolverRegistry(opts.resolvers ?? []);
+  const resolverRegistry = createExternalObjectResolverRegistry([
+    ...(opts.resolvers ?? []),
+    ...(githubProvider?.resolvers ?? []),
+  ]);
 
   async function issueById(issueId: string, dbOrTx: any = db) {
     return dbOrTx

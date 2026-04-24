@@ -23,6 +23,7 @@ import {
 import { canonicalizeExternalObjectUrl } from "@paperclipai/shared";
 import type { PaperclipPluginManifestV1 } from "@paperclipai/shared";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
+import { createGitHubExternalObjectProvider } from "../services/github-external-object-provider.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -123,6 +124,223 @@ describe("external object registries", () => {
   });
 });
 
+describe("GitHub external object provider", () => {
+  function githubObject(path: string, objectType: "pull_request" | "issue") {
+    const canonical = canonicalizeExternalObjectUrl(`https://github.com/acme/app/${path}`);
+    if (!canonical) throw new Error("expected canonical url");
+    return {
+      id: randomUUID(),
+      companyId: "company-1",
+      providerKey: "github",
+      objectType,
+      externalId: `acme/app#${path}`,
+      sanitizedCanonicalUrl: canonical.sanitizedCanonicalUrl,
+      canonicalIdentityHash: canonical.canonicalIdentityHash,
+      displayTitle: "acme/app#42",
+      statusKey: null,
+      statusLabel: null,
+      statusCategory: "unknown",
+      statusTone: "neutral",
+      liveness: "unknown",
+      isTerminal: false,
+      data: {},
+      remoteVersion: null,
+      etag: null,
+    } as any;
+  }
+
+  function response(body: Record<string, unknown>, init: ResponseInit = {}) {
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json", etag: '"etag-1"', ...(init.headers ?? {}) },
+      ...init,
+    });
+  }
+
+  it("detects GitHub pull request and issue URLs before the generic fallback", async () => {
+    const provider = createGitHubExternalObjectProvider({} as any, { tokenProvider: null });
+    const pr = canonicalizeExternalObjectUrl("https://github.com/Acme/App/pull/42?token=secret#discussion");
+    const issue = canonicalizeExternalObjectUrl("https://github.com/Acme/App/issues/7");
+    const other = canonicalizeExternalObjectUrl("https://example.com/Acme/App/pull/42");
+    if (!pr || !issue || !other) throw new Error("expected canonical urls");
+
+    const detections = await provider.detector.detect({
+      companyId: "company-1",
+      urls: [pr, issue, other],
+      sourceContext: {
+        companyId: "company-1",
+        sourceIssueId: "issue-1",
+        sourceKind: "description",
+        sourceRecordId: null,
+        documentKey: null,
+        propertyKey: null,
+      },
+    });
+
+    expect(detections).toEqual([
+      expect.objectContaining({
+        providerKey: "github",
+        objectType: "pull_request",
+        externalId: "acme/app#pull/42",
+        displayTitle: "Acme/App#42",
+      }),
+      expect.objectContaining({
+        providerKey: "github",
+        objectType: "issue",
+        externalId: "acme/app#issues/7",
+        displayTitle: "Acme/App#7",
+      }),
+    ]);
+    expect(JSON.stringify(detections)).not.toContain("secret");
+  });
+
+  it.each([
+    [
+      "open",
+      { state: "open", draft: false, merged: false, title: "Ship it", updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "open", statusLabel: "Open", statusCategory: "open", statusTone: "info", isTerminal: false },
+    ],
+    [
+      "draft",
+      { state: "open", draft: true, merged: false, title: "WIP", updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "draft", statusLabel: "Draft", statusCategory: "waiting", statusTone: "warning", isTerminal: false },
+    ],
+    [
+      "closed",
+      { state: "closed", draft: false, merged: false, title: "Closed PR", updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "closed", statusLabel: "Closed", statusCategory: "closed", statusTone: "muted", isTerminal: true },
+    ],
+    [
+      "merged",
+      { state: "closed", draft: false, merged: true, title: "Merged PR", updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "merged", statusLabel: "Merged", statusCategory: "succeeded", statusTone: "success", isTerminal: true },
+    ],
+  ])("resolves a %s pull request snapshot", async (_name, body, expected) => {
+    const fetch = vi.fn(async () => response(body));
+    const provider = createGitHubExternalObjectProvider({} as any, { fetch, tokenProvider: null });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    const result = await resolver.resolve({
+      companyId: "company-1",
+      object: githubObject("pull/42", "pull_request"),
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.github.com/repos/acme/app/pulls/42",
+      expect.objectContaining({
+        headers: expect.not.objectContaining({ authorization: expect.any(String) }),
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      snapshot: expect.objectContaining({
+        ...expected,
+        displayTitle: expect.stringContaining(String(body.title)),
+        remoteVersion: "2026-04-24T01:02:03Z",
+        etag: '"etag-1"',
+        data: expect.objectContaining({
+          provider: "github",
+          owner: "acme",
+          repo: "app",
+          number: 42,
+        }),
+      }),
+    });
+    expect(JSON.stringify(result)).not.toContain("authorization");
+  });
+
+  it.each([
+    [
+      "open",
+      { state: "open", title: "Issue", state_reason: null, updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "open", statusLabel: "Open", statusCategory: "open", statusTone: "info", isTerminal: false },
+    ],
+    [
+      "closed",
+      { state: "closed", title: "Issue", state_reason: "completed", updated_at: "2026-04-24T01:02:03Z" },
+      { statusKey: "closed_completed", statusLabel: "Closed: completed", statusCategory: "closed", statusTone: "muted", isTerminal: true },
+    ],
+  ])("resolves a %s issue snapshot", async (_name, body, expected) => {
+    const fetch = vi.fn(async () => response(body));
+    const provider = createGitHubExternalObjectProvider({} as any, { fetch, tokenProvider: null });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "issue")!;
+
+    const result = await resolver.resolve({
+      companyId: "company-1",
+      object: githubObject("issues/42", "issue"),
+    });
+
+    expect(fetch).toHaveBeenCalledWith("https://api.github.com/repos/acme/app/issues/42", expect.any(Object));
+    expect(result).toEqual({
+      ok: true,
+      snapshot: expect.objectContaining({
+        ...expected,
+        data: expect.objectContaining({
+          provider: "github",
+          owner: "acme",
+          repo: "app",
+          number: 42,
+        }),
+      }),
+    });
+  });
+
+  it("uses a configured token without storing it in the resolved snapshot", async () => {
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.headers).toEqual(expect.objectContaining({ authorization: "Bearer ghp_secret" }));
+      return response({ state: "open", draft: false, merged: false, title: "Private PR" });
+    });
+    const provider = createGitHubExternalObjectProvider({} as any, {
+      fetch,
+      tokenProvider: async () => "ghp_secret",
+    });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    const result = await resolver.resolve({
+      companyId: "company-1",
+      object: githubObject("pull/42", "pull_request"),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("ghp_secret");
+  });
+
+  it.each([
+    [
+      "auth-required",
+      new Response("", { status: 401 }),
+      { ok: false, liveness: "auth_required", errorCode: "github_auth_required" },
+    ],
+    [
+      "rate-limit",
+      new Response("", {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 120) },
+      }),
+      { ok: false, liveness: "unreachable", errorCode: "github_rate_limited" },
+    ],
+    [
+      "not-found",
+      new Response("", { status: 404, headers: { etag: '"missing"' } }),
+      { ok: true, snapshot: expect.objectContaining({ statusKey: "not_found", statusCategory: "archived", statusTone: "muted" }) },
+    ],
+  ])("maps %s responses to provider-safe results", async (_name, githubResponse, expected) => {
+    const provider = createGitHubExternalObjectProvider({} as any, {
+      fetch: async () => githubResponse,
+      tokenProvider: null,
+    });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    const result = await resolver.resolve({
+      companyId: "company-1",
+      object: githubObject("pull/42", "pull_request"),
+    });
+
+    expect(result).toEqual(expect.objectContaining(expected));
+    expect(JSON.stringify(result)).not.toContain("http");
+  });
+});
+
 describeEmbeddedPostgres("externalObjectService", () => {
   let db!: ReturnType<typeof createDb>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
@@ -179,8 +397,9 @@ describeEmbeddedPostgres("externalObjectService", () => {
     expect(objectRows).toHaveLength(1);
     expect(objectRows[0]).toMatchObject({
       companyId,
-      providerKey: "url",
-      objectType: "link",
+      providerKey: "github",
+      objectType: "pull_request",
+      externalId: "acme/app#pull/42",
       sanitizedCanonicalUrl: "https://github.com/acme/app/pull/42",
       liveness: "unknown",
       statusCategory: "unknown",
