@@ -267,6 +267,7 @@ export interface IssueComment {
   authorAgentId: string | null;
   authorUserId: string | null;
   body: string;
+  followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -49,6 +49,7 @@ import {
   ISSUE_LIST_MAX_LIMIT,
   issueReferenceService,
   issueService,
+  issueTreeControlService,
   clampIssueListLimit,
   documentService,
   logActivity,
@@ -182,7 +183,7 @@ function isClosedIssueStatus(status: string | null | undefined): status is "done
   return status === "done" || status === "cancelled";
 }
 
-function shouldImplicitlyMoveCommentedIssueToTodoForAgent(input: {
+function shouldImplicitlyMoveCommentedIssueToTodo(input: {
   issueStatus: string | null | undefined;
   assigneeAgentId: string | null | undefined;
   actorType: "agent" | "user";
@@ -194,6 +195,10 @@ function shouldImplicitlyMoveCommentedIssueToTodoForAgent(input: {
   if (!isClosedIssueStatus(input.issueStatus) && input.issueStatus !== "blocked") return false;
   if (typeof input.assigneeAgentId !== "string" || input.assigneeAgentId.length === 0) return false;
   return true;
+}
+
+function isExplicitResumeCapableStatus(status: string | null | undefined) {
+  return status === "done" || status === "blocked" || status === "todo" || status === "in_progress";
 }
 
 function queueResolvedInteractionContinuationWakeup(input: {
@@ -404,6 +409,7 @@ export function issueRoutes(
   const documentsSvc = documentService(db);
   const issueReferencesSvc = issueReferenceService(db);
   const routinesSvc = routineService(db);
+  const treeControlSvc = issueTreeControlService(db);
   const feedbackExportService = opts?.feedbackExportService;
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -619,6 +625,90 @@ export function issueRoutes(
       });
     }
     return true;
+  }
+
+  async function assertExplicitResumeIntentAllowed(
+    req: Request,
+    res: Response,
+    issue: { id: string; companyId: string; status: string; assigneeAgentId: string | null },
+  ) {
+    if (issue.status === "cancelled") {
+      res.status(409).json({
+        error: "Cancelled issues must be restored through the dedicated restore flow",
+        details: {
+          issueId: issue.id,
+          status: issue.status,
+          securityPrinciples: ["Complete Mediation", "Fail Securely"],
+        },
+      });
+      return false;
+    }
+
+    if (!isExplicitResumeCapableStatus(issue.status)) {
+      res.status(409).json({
+        error: "Issue is not resumable through comment follow-up intent",
+        details: { issueId: issue.id, status: issue.status },
+      });
+      return false;
+    }
+
+    const activePauseHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issue.id);
+    if (activePauseHold) {
+      res.status(409).json({
+        error: "Issue follow-up blocked by active subtree pause hold",
+        details: {
+          issueId: issue.id,
+          holdId: activePauseHold.holdId,
+          rootIssueId: activePauseHold.rootIssueId,
+          mode: activePauseHold.mode,
+          securityPrinciples: ["Complete Mediation", "Fail Securely", "Secure Defaults"],
+        },
+      });
+      return false;
+    }
+
+    if (issue.status === "blocked") {
+      const readiness = await svc.getDependencyReadiness(issue.id);
+      if (readiness.unresolvedBlockerCount > 0) {
+        res.status(409).json({
+          error: "Issue follow-up blocked by unresolved blockers",
+          details: {
+            issueId: issue.id,
+            unresolvedBlockerIssueIds: readiness.unresolvedBlockerIssueIds,
+          },
+        });
+        return false;
+      }
+    }
+
+    if (req.actor.type !== "agent") return true;
+
+    const actorAgentId = req.actor.agentId;
+    if (!actorAgentId) {
+      res.status(403).json({ error: "Agent authentication required" });
+      return false;
+    }
+    if (!issue.assigneeAgentId) {
+      res.status(409).json({
+        error: "Issue follow-up requires an assigned agent",
+        details: { issueId: issue.id, actorAgentId },
+      });
+      return false;
+    }
+    if (issue.assigneeAgentId === actorAgentId) return true;
+    if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
+      return true;
+    }
+
+    res.status(403).json({
+      error: "Agent cannot request follow-up for another agent's issue",
+      details: {
+        issueId: issue.id,
+        assigneeAgentId: issue.assigneeAgentId,
+        actorAgentId,
+      },
+    });
+    return false;
   }
 
   async function resolveActiveIssueRun(issue: {
@@ -1794,17 +1884,27 @@ export function issueRoutes(
       comment: commentBody,
       reviewRequest,
       reopen: reopenRequested,
+      resume: resumeRequested,
       interrupt: interruptRequested,
       hiddenAt: hiddenAtRaw,
       ...updateFields
     } = req.body;
+    if (resumeRequested === true && !commentBody) {
+      res.status(400).json({ error: "Follow-up intent requires a comment" });
+      return;
+    }
+    if (resumeRequested === true && !(await assertExplicitResumeIntentAllowed(req, res, existing))) return;
+    if (resumeRequested !== true && reopenRequested === true && req.actor.type === "agent") {
+      if (!(await assertExplicitResumeIntentAllowed(req, res, existing))) return;
+    }
     await assertIssueEnvironmentSelection(existing.companyId, updateFields.executionWorkspaceSettings?.environmentId);
     const requestedAssigneeAgentId =
       normalizedAssigneeAgentId === undefined ? existing.assigneeAgentId : normalizedAssigneeAgentId;
+    const explicitMoveToTodoRequested = reopenRequested || resumeRequested === true;
     const effectiveMoveToTodoRequested =
-      reopenRequested ||
+      explicitMoveToTodoRequested ||
       (!!commentBody &&
-        shouldImplicitlyMoveCommentedIssueToTodoForAgent({
+        shouldImplicitlyMoveCommentedIssueToTodo({
           issueStatus: existing.status,
           assigneeAgentId: requestedAssigneeAgentId,
           actorType: actor.actorType,
@@ -1817,6 +1917,10 @@ export function issueRoutes(
       isBlocked && effectiveMoveToTodoRequested
         ? (await svc.getDependencyReadiness(existing.id)).unresolvedBlockerCount > 0
         : false;
+    if (resumeRequested === true && isBlocked && hasUnresolvedFirstClassBlockers) {
+      res.status(409).json({ error: "Issue follow-up blocked by unresolved blockers" });
+      return;
+    }
     let interruptedRunId: string | null = null;
     const closedExecutionWorkspace = await getClosedIssueExecutionWorkspace(existing);
     const isAgentWorkUpdate =
@@ -2072,6 +2176,7 @@ export function issueRoutes(
         ...updateFields,
         identifier: issue.identifier,
         ...(commentBody ? { source: "comment" } : {}),
+        ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
         _previous: hasFieldChanges ? previous : undefined,
@@ -2214,6 +2319,7 @@ export function issueRoutes(
           bodySnippet: comment.body.slice(0, 120),
           identifier: issue.identifier,
           issueTitle: issue.title,
+          ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
           ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
           ...(interruptedRunId ? { interruptedRunId } : {}),
           ...(hasFieldChanges ? { updated: true } : {}),
@@ -3145,12 +3251,18 @@ export function issueRoutes(
 
     const actor = getActorInfo(req);
     const reopenRequested = req.body.reopen === true;
+    const resumeRequested = req.body.resume === true;
     const interruptRequested = req.body.interrupt === true;
+    if (resumeRequested === true && !(await assertExplicitResumeIntentAllowed(req, res, issue))) return;
+    if (resumeRequested !== true && reopenRequested === true && req.actor.type === "agent") {
+      if (!(await assertExplicitResumeIntentAllowed(req, res, issue))) return;
+    }
     const isClosed = isClosedIssueStatus(issue.status);
     const isBlocked = issue.status === "blocked";
+    const explicitMoveToTodoRequested = reopenRequested || resumeRequested === true;
     const effectiveMoveToTodoRequested =
-      reopenRequested ||
-      shouldImplicitlyMoveCommentedIssueToTodoForAgent({
+      explicitMoveToTodoRequested ||
+      shouldImplicitlyMoveCommentedIssueToTodo({
         issueStatus: issue.status,
         assigneeAgentId: issue.assigneeAgentId,
         actorType: actor.actorType,
@@ -3160,6 +3272,10 @@ export function issueRoutes(
       isBlocked && effectiveMoveToTodoRequested
         ? (await svc.getDependencyReadiness(issue.id)).unresolvedBlockerCount > 0
         : false;
+    if (resumeRequested === true && isBlocked && hasUnresolvedFirstClassBlockers) {
+      res.status(409).json({ error: "Issue follow-up blocked by unresolved blockers" });
+      return;
+    }
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
@@ -3252,6 +3368,7 @@ export function issueRoutes(
         bodySnippet: comment.body.slice(0, 120),
         identifier: currentIssue.identifier,
         issueTitle: currentIssue.title,
+        ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
         ...summarizeIssueReferenceActivityDetails({

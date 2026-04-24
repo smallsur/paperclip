@@ -61,6 +61,9 @@ const mockIssueThreadInteractionService = vi.hoisted(() => ({
   expireRequestConfirmationsSupersededByComment: vi.fn(async () => []),
   expireStaleRequestConfirmationsForIssueDocument: vi.fn(async () => []),
 }));
+const mockIssueTreeControlService = vi.hoisted(() => ({
+  getActivePauseHoldGate: vi.fn(async () => null),
+}));
 
 vi.mock("@paperclipai/shared/telemetry", () => ({
   trackAgentTaskCompleted: vi.fn(),
@@ -128,6 +131,7 @@ vi.mock("../services/index.js", () => ({
   }),
   issueService: () => mockIssueService,
   issueThreadInteractionService: () => mockIssueThreadInteractionService,
+  issueTreeControlService: () => mockIssueTreeControlService,
   logActivity: mockLogActivity,
   projectService: () => ({}),
   routineService: () => mockRoutineService,
@@ -214,6 +218,7 @@ describe.sequential("issue comment reopen routes", () => {
     mockInstanceSettingsService.get.mockReset();
     mockInstanceSettingsService.listCompanyIds.mockReset();
     mockRoutineService.syncRunStatusForIssue.mockReset();
+    mockIssueTreeControlService.getActivePauseHoldGate.mockReset();
     mockTxInsertValues.mockReset();
     mockTxInsert.mockReset();
     mockDb.transaction.mockReset();
@@ -241,6 +246,7 @@ describe.sequential("issue comment reopen routes", () => {
     });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1"]);
     mockRoutineService.syncRunStatusForIssue.mockResolvedValue(undefined);
+    mockIssueTreeControlService.getActivePauseHoldGate.mockResolvedValue(null);
     mockIssueService.addComment.mockResolvedValue({
       id: "comment-1",
       issueId: "11111111-1111-4111-8111-111111111111",
