@@ -127,7 +127,7 @@ describe("project env routes", () => {
     vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
-    vi.resetAllMocks();
+    vi.clearAllMocks();
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);
