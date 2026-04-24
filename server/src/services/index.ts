@@ -23,6 +23,15 @@ export { issueThreadInteractionService } from "./issue-thread-interactions.js";
 export { issueTreeControlService } from "./issue-tree-control.js";
 export { issueApprovalService } from "./issue-approvals.js";
 export { issueReferenceService } from "./issue-references.js";
+export {
+  createExternalObjectDetectorRegistry,
+  createExternalObjectResolverRegistry,
+  externalObjectService,
+  type ExternalObjectDetector,
+  type ExternalObjectResolver,
+  type ExternalObjectResolveResult,
+  type ExternalObjectResolverSnapshot,
+} from "./external-objects.js";
 export { goalService } from "./goals.js";
 export { activityService, type ActivityFilters } from "./activity.js";
 export { approvalService } from "./approvals.js";
