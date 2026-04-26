@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { AGENT_STATUSES, ISSUE_PRIORITIES, ISSUE_STATUSES } from "@paperclipai/shared";
-import type { IssueBlockerAttention } from "@paperclipai/shared";
+import type { IssueBlockerAttention, IssueRelationIssueSummary } from "@paperclipai/shared";
 import { Bot, CheckCircle2, Clock3, DollarSign, FolderKanban, Inbox, MessageSquare, Users } from "lucide-react";
 import { CopyText } from "@/components/CopyText";
 import { EmptyState } from "@/components/EmptyState";
 import { Identity } from "@/components/Identity";
+import { IssueBlockedNotice } from "@/components/IssueBlockedNotice";
 import { IssueRow } from "@/components/IssueRow";
 import { MetricCard } from "@/components/MetricCard";
 import { PriorityIcon } from "@/components/PriorityIcon";
@@ -196,6 +197,157 @@ const coveredBlockedIssue = createIssue({
   updatedAt: new Date("2026-04-24T13:40:00.000Z"),
 });
 
+function summaryBlocker(
+  partial: Partial<IssueRelationIssueSummary> & Pick<IssueRelationIssueSummary, "id" | "title" | "status">,
+): IssueRelationIssueSummary {
+  return {
+    id: partial.id,
+    identifier: partial.identifier ?? null,
+    title: partial.title,
+    status: partial.status,
+    priority: partial.priority ?? "medium",
+    assigneeAgentId: partial.assigneeAgentId ?? null,
+    assigneeUserId: partial.assigneeUserId ?? null,
+    terminalBlockers: partial.terminalBlockers,
+  };
+}
+
+type BlockedNoticeStateLabel =
+  | "Default covered"
+  | "Stalled (single leaf)"
+  | "Stalled (multiple leaves)";
+
+type BlockedNoticeFixture = {
+  label: BlockedNoticeStateLabel;
+  caption: string;
+  blockers: IssueRelationIssueSummary[];
+  blockerAttention: IssueBlockerAttention;
+};
+
+const stalledLeafSingle = summaryBlocker({
+  id: "issue-stalled-leaf-single",
+  identifier: "PAP-2279",
+  title: "Stage gate review for export pipeline",
+  status: "in_review",
+});
+
+const stalledLeafMultiPrimary = summaryBlocker({
+  id: "issue-stalled-leaf-multi-1",
+  identifier: "PAP-2284",
+  title: "Approve schema migration",
+  status: "in_review",
+});
+
+const stalledLeafMultiSecondary = summaryBlocker({
+  id: "issue-stalled-leaf-multi-2",
+  identifier: "PAP-2291",
+  title: "Sign off on rollout copy",
+  status: "in_review",
+});
+
+const blockedNoticeFixtures: BlockedNoticeFixture[] = [
+  {
+    label: "Default covered",
+    caption: "Active sub-issue covers the chain — informational only.",
+    blockers: [
+      summaryBlocker({
+        id: "issue-active-child",
+        identifier: "PAP-2175",
+        title: "Wire export pipeline preview",
+        status: "in_progress",
+      }),
+    ],
+    blockerAttention: attention({
+      state: "covered",
+      reason: "active_child",
+      unresolvedBlockerCount: 1,
+      coveredBlockerCount: 1,
+      sampleBlockerIdentifier: "PAP-2175",
+    }),
+  },
+  {
+    label: "Stalled (single leaf)",
+    caption: "Chain stalled on one leaf review — copy names the leaf and shows the chip strip.",
+    blockers: [
+      summaryBlocker({
+        id: "issue-stalled-parent-single",
+        identifier: "PAP-2278",
+        title: "Ship rollout dashboard",
+        status: "blocked",
+        terminalBlockers: [stalledLeafSingle],
+      }),
+    ],
+    blockerAttention: attention({
+      state: "stalled",
+      reason: "stalled_review",
+      unresolvedBlockerCount: 1,
+      stalledBlockerCount: 1,
+      sampleBlockerIdentifier: "PAP-2279",
+      sampleStalledBlockerIdentifier: "PAP-2279",
+    }),
+  },
+  {
+    label: "Stalled (multiple leaves)",
+    caption: "Multiple stalled reviews — copy switches to the unnamed pluralized variant.",
+    blockers: [
+      summaryBlocker({
+        id: "issue-stalled-parent-multi-a",
+        identifier: "PAP-2283",
+        title: "Coordinate billing change rollout",
+        status: "blocked",
+        terminalBlockers: [stalledLeafMultiPrimary],
+      }),
+      summaryBlocker({
+        id: "issue-stalled-parent-multi-b",
+        identifier: "PAP-2290",
+        title: "Coordinate marketing handoff",
+        status: "blocked",
+        terminalBlockers: [stalledLeafMultiSecondary],
+      }),
+    ],
+    blockerAttention: attention({
+      state: "stalled",
+      reason: "stalled_review",
+      unresolvedBlockerCount: 2,
+      stalledBlockerCount: 2,
+      sampleStalledBlockerIdentifier: "PAP-2284",
+    }),
+  },
+];
+
+function BlockedNoticeSurface({
+  mode,
+  size,
+  fixture,
+}: {
+  mode: "light" | "dark";
+  size: "desktop" | "mobile";
+  fixture: BlockedNoticeFixture;
+}) {
+  const isDark = mode === "dark";
+  const isMobile = size === "mobile";
+  return (
+    <div className={isDark ? "dark" : undefined}>
+      <div className="rounded-lg border border-border bg-background text-foreground">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
+          <span>{fixture.label}</span>
+          <span className="font-mono">
+            {size} · {mode}
+          </span>
+        </div>
+        <div className={isMobile ? "max-w-[358px] px-3 py-3" : "min-w-[620px] px-4 py-3"}>
+          <IssueBlockedNotice
+            issueStatus="blocked"
+            blockers={fixture.blockers}
+            blockerAttention={fixture.blockerAttention}
+          />
+          <p className="text-[11px] text-muted-foreground">{fixture.caption}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CoveredBlockedSurface({ mode, size }: { mode: "light" | "dark"; size: "desktop" | "mobile" }) {
   const isDark = mode === "dark";
   const isMobile = size === "mobile";
@@ -294,6 +446,24 @@ function StatusLanguage() {
             <CoveredBlockedSurface mode="light" size="mobile" />
             <CoveredBlockedSurface mode="dark" size="mobile" />
           </div>
+        </Section>
+
+        <Section eyebrow="Covered blocked" title="IssueBlockedNotice in chat thread">
+          <div className="space-y-5">
+            {blockedNoticeFixtures.map((fixture) => (
+              <div key={fixture.label} className="grid gap-4 xl:grid-cols-2">
+                <BlockedNoticeSurface mode="light" size="desktop" fixture={fixture} />
+                <BlockedNoticeSurface mode="dark" size="desktop" fixture={fixture} />
+                <BlockedNoticeSurface mode="light" size="mobile" fixture={fixture} />
+                <BlockedNoticeSurface mode="dark" size="mobile" fixture={fixture} />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Stalled-state copy switches to "stalled in review without a clear next step" and adds a "Stalled in review"
+            chip strip beneath the regular blocker chips. Single-leaf stalled copy names the leaf identifier; multi-leaf
+            falls back to the unnamed pluralized variant.
+          </p>
         </Section>
 
         <Section eyebrow="Priority" title="Static labels and editable popover trigger">
