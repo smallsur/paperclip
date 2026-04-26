@@ -134,6 +134,49 @@ const SHOTS = [
     viewport: { width: 1280, height: 900 },
     theme: "light",
   },
+  // PAP-2279 §9 acceptance shots — integration surfaces missing from the prior set.
+  {
+    storyId: "foundations-external-objects--properties-row-desktop",
+    label: "external-properties-row-desktop-1440",
+    viewport: { width: 1440, height: 900 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--properties-row-mobile-sheet",
+    label: "external-properties-row-mobile-390",
+    viewport: { width: 390, height: 844 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--related-work-empty",
+    label: "external-related-work-empty-1440",
+    viewport: { width: 1440, height: 900 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--sidebar-mobile",
+    label: "external-sidebar-mobile-390",
+    viewport: { width: 390, height: 844 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--issue-list-row",
+    label: "external-issue-list-row-1440",
+    viewport: { width: 1440, height: 600 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--filter-popover-open",
+    label: "external-filter-popover-open-1440",
+    viewport: { width: 1440, height: 900 },
+    theme: "light",
+  },
+  {
+    storyId: "foundations-external-objects--integration-surfaces",
+    label: "external-integration-surfaces-dark-1440",
+    viewport: { width: 1440, height: 1600 },
+    theme: "dark",
+  },
 ];
 
 async function applyTheme(page, theme) {

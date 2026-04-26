@@ -90,6 +90,9 @@ const updateIssueRouteSchema = updateIssueSchema.extend({
 const refreshExternalObjectsSchema = z.object({
   objectIds: z.array(z.string().uuid()).max(50).optional(),
 }).strict();
+const externalObjectSummariesSchema = z.object({
+  issueIds: z.array(z.string().uuid()).max(1000),
+}).strict();
 
 type ParsedExecutionState = NonNullable<ReturnType<typeof parseIssueExecutionState>>;
 type NormalizedExecutionPolicy = NonNullable<ReturnType<typeof normalizeIssueExecutionPolicy>>;
@@ -1202,6 +1205,13 @@ export function issueRoutes(
     assertCompanyAccess(req, issue.companyId);
     const summary = await externalObjectsSvc.getIssueSummary(issue.id);
     res.json(summary);
+  });
+
+  router.post("/companies/:companyId/issues/external-object-summaries", validate(externalObjectSummariesSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const summaries = await externalObjectsSvc.getIssueSummaries(companyId, req.body.issueIds);
+    res.json({ summaries: Object.fromEntries(summaries) });
   });
 
   router.post("/issues/:id/external-objects/refresh", validate(refreshExternalObjectsSchema), async (req, res) => {

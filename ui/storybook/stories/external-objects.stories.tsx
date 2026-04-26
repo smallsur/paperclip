@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
   EXTERNAL_OBJECT_LIVENESS_STATES,
@@ -11,8 +12,16 @@ import {
 import { ExternalObjectPill } from "@/components/ExternalObjectPill";
 import { ExternalObjectStatusIcon } from "@/components/ExternalObjectStatusIcon";
 import { ExternalObjectStatusSummary } from "@/components/ExternalObjectStatusSummary";
+import { IssueFiltersPopover } from "@/components/IssueFiltersPopover";
+import { IssueProperties } from "@/components/IssueProperties";
 import { IssueRelatedWorkPanel } from "@/components/IssueRelatedWorkPanel";
+import { IssueRow } from "@/components/IssueRow";
 import { MarkdownBody, type MarkdownExternalReferenceMap } from "@/components/MarkdownBody";
+import {
+  countActiveIssueFilters,
+  defaultIssueFilterState,
+  type IssueFilterState,
+} from "@/lib/issue-filters";
 import {
   externalObjectCategoryLabel,
   externalObjectFallbackTone,
@@ -21,6 +30,13 @@ import {
   externalObjectTypeLabel,
 } from "@/lib/external-objects";
 import type { IssueExternalObjectGroup } from "@/hooks/useIssueExternalObjects";
+import {
+  storybookAgents,
+  storybookExecutionWorkspaces,
+  storybookIssueLabels,
+  storybookIssues,
+  storybookProjects,
+} from "../fixtures/paperclipData";
 
 function makeObject(args: {
   id: string;
@@ -423,6 +439,239 @@ function StateMatrixStory() {
   );
 }
 
+function makeIntegrationGroups(): IssueExternalObjectGroup[] {
+  return [
+    makeGroup({
+      object: makeObject({
+        id: "obj-int-failed",
+        providerKey: "github",
+        objectType: "pull_request",
+        statusCategory: "failed",
+        liveness: "fresh",
+        displayTitle: "CI broken on main",
+        url: "https://github.com/acme/web/pull/241",
+        statusLabel: "CI failed",
+      }),
+      mentionCount: 4,
+      sourceLabels: ["Description", "3 comments"],
+    }),
+    makeGroup({
+      object: makeObject({
+        id: "obj-int-auth",
+        providerKey: "hubspot",
+        objectType: "lead",
+        statusCategory: "auth_required",
+        liveness: "auth_required",
+        displayTitle: "Acme deal — needs reconnect",
+        url: "https://app.hubspot.com/leads/99",
+        statusLabel: "Reconnect",
+      }),
+      mentionCount: 1,
+      sourceLabels: ["External links property"],
+    }),
+    makeGroup({
+      object: makeObject({
+        id: "obj-int-running",
+        providerKey: "ci",
+        objectType: "deployment",
+        statusCategory: "running",
+        liveness: "fresh",
+        displayTitle: "deploy prod-0412",
+        url: "https://ci.example.com/runs/88421",
+        statusLabel: "Running",
+      }),
+      mentionCount: 2,
+      sourceLabels: ["2 comments"],
+    }),
+  ];
+}
+
+function makeIntegrationSummary(): ExternalObjectSummary {
+  const objects = makeIntegrationGroups()
+    .map((entry) => entry.group.object)
+    .filter((object): object is ExternalObject => Boolean(object))
+    .map((object) => ({
+      id: object.id,
+      providerKey: object.providerKey,
+      objectType: object.objectType,
+      displayTitle: object.displayTitle,
+      statusCategory: object.statusCategory,
+      statusTone: object.statusTone,
+      liveness: object.liveness,
+      isTerminal: object.isTerminal,
+    }));
+  const tones = objects.map((o) => o.statusTone);
+  const dominant: ExternalObjectSummary["highestSeverity"] =
+    tones.includes("danger") ? "danger"
+      : tones.includes("warning") ? "warning"
+      : tones.includes("info") ? "info"
+      : tones.includes("success") ? "success"
+      : "muted";
+  const byStatusCategory: Record<string, number> = {};
+  for (const o of objects) {
+    byStatusCategory[o.statusCategory] = (byStatusCategory[o.statusCategory] ?? 0) + 1;
+  }
+  return {
+    total: objects.length,
+    byStatusCategory,
+    byLiveness: { fresh: objects.length - 1, stale: 0, auth_required: 1, unreachable: 0, unknown: 0 },
+    highestSeverity: dominant,
+    staleCount: 0,
+    authRequiredCount: 1,
+    unreachableCount: 0,
+    objects,
+  };
+}
+
+function PropertiesPanelDesktop() {
+  const issue = storybookIssues[0]!;
+  return (
+    <div className="paperclip-story w-[420px] rounded-lg border border-border bg-background/70 p-4">
+      <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
+        Issue properties — desktop @ 1440×900
+      </div>
+      <IssueProperties
+        issue={issue}
+        childIssues={[]}
+        externalObjects={makeIntegrationGroups()}
+        onAddSubIssue={() => undefined}
+        onUpdate={() => undefined}
+      />
+    </div>
+  );
+}
+
+function PropertiesPanelMobile() {
+  const issue = storybookIssues[0]!;
+  return (
+    <div className="paperclip-story mx-auto w-[358px] rounded-lg border border-border bg-background/70 p-3">
+      <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
+        Issue properties — mobile sheet @ 390×844
+      </div>
+      <IssueProperties
+        issue={issue}
+        childIssues={[]}
+        externalObjects={makeIntegrationGroups()}
+        onAddSubIssue={() => undefined}
+        onUpdate={() => undefined}
+        inline
+      />
+    </div>
+  );
+}
+
+function RelatedWorkEmptyDesktop() {
+  return (
+    <div className="paperclip-story space-y-3 p-6">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        Related work — empty external objects (zero refs, empty copy visible)
+      </div>
+      <IssueRelatedWorkPanel
+        relatedWork={{ outbound: [], inbound: [] }}
+        externalObjects={[]}
+      />
+    </div>
+  );
+}
+
+function SidebarMobileDrawer() {
+  const summary = makeIntegrationSummary();
+  return (
+    <div className="paperclip-story mx-auto w-[320px] rounded border border-border bg-background p-2">
+      <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Projects (mobile drawer)</div>
+      <ul className="flex flex-col">
+        {[
+          { name: "Paperclip App", color: "#6366f1", summary },
+          { name: "Marketing site", color: "#22c55e", summary: { ...summary, highestSeverity: "warning", byStatusCategory: { waiting: 2 }, total: 2, objects: [] } },
+          { name: "Experimental", color: "#a855f7", summary: { ...summary, highestSeverity: "muted", byStatusCategory: {}, total: 0, objects: [] } },
+        ].map((project) => (
+          <li
+            key={project.name}
+            className="flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium hover:bg-accent/50"
+          >
+            <span className="h-3.5 w-3.5 shrink-0 rounded-sm" style={{ backgroundColor: project.color }} />
+            <span className="flex-1 truncate">{project.name}</span>
+            <ExternalObjectStatusSummary summary={project.summary as ExternalObjectSummary} compact />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function IssueListWithBadge() {
+  const summary = makeIntegrationSummary();
+  return (
+    <div className="paperclip-story p-6">
+      <div className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
+        Issue list — desktop @ 1440×900 (badge + control row)
+      </div>
+      <div className="overflow-hidden rounded-xl border border-border bg-background/70">
+        {storybookIssues.slice(0, 2).map((issue, index) => (
+          <IssueRow
+            key={issue.id}
+            issue={issue}
+            externalObjectSummary={index === 0 ? summary : null}
+            desktopTrailing={
+              <span className="text-xs text-muted-foreground">{issue.priority}</span>
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FilterPopoverWithExternalChecked() {
+  const [state, setState] = useState<IssueFilterState>({
+    ...defaultIssueFilterState,
+    externalObjectStatuses: ["failed", "auth_required"],
+  });
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      triggerRef.current?.querySelector("button")?.click();
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="paperclip-story flex min-h-[640px] items-start justify-end p-6">
+      <div ref={triggerRef}>
+        <IssueFiltersPopover
+          state={state}
+          onChange={(patch) => setState((current) => ({ ...current, ...patch }))}
+          activeFilterCount={countActiveIssueFilters(state, true)}
+          agents={storybookAgents.map((agent) => ({ id: agent.id, name: agent.name }))}
+          projects={storybookProjects.map((project) => ({ id: project.id, name: project.name }))}
+          labels={storybookIssueLabels.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
+          currentUserId="user-board"
+          enableRoutineVisibilityFilter
+          buttonVariant="outline"
+          workspaces={storybookExecutionWorkspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }))}
+          creators={[
+            { id: "user:user-board", label: "Riley Board", kind: "user", searchText: "board user human" },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+function IntegrationSurfacesStory() {
+  return (
+    <div className="paperclip-story space-y-10 p-6">
+      <PropertiesPanelDesktop />
+      <PropertiesPanelMobile />
+      <RelatedWorkEmptyDesktop />
+      <SidebarMobileDrawer />
+      <IssueListWithBadge />
+      <FilterPopoverWithExternalChecked />
+    </div>
+  );
+}
+
 const meta = {
   title: "Foundations/External Objects",
   component: StateMatrixStory,
@@ -441,3 +690,31 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const FullSurface: Story = {};
+
+export const PropertiesRowDesktop: StoryObj = {
+  render: () => <PropertiesPanelDesktop />,
+};
+
+export const PropertiesRowMobileSheet: StoryObj = {
+  render: () => <PropertiesPanelMobile />,
+};
+
+export const RelatedWorkEmpty: StoryObj = {
+  render: () => <RelatedWorkEmptyDesktop />,
+};
+
+export const SidebarMobile: StoryObj = {
+  render: () => <SidebarMobileDrawer />,
+};
+
+export const IssueListRow: StoryObj = {
+  render: () => <IssueListWithBadge />,
+};
+
+export const FilterPopoverOpen: StoryObj = {
+  render: () => <FilterPopoverWithExternalChecked />,
+};
+
+export const IntegrationSurfaces: StoryObj = {
+  render: () => <IntegrationSurfacesStory />,
+};

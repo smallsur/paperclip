@@ -2,7 +2,6 @@ import { and, asc, eq, inArray, isNull, lte } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { documents, externalObjectMentions, externalObjects, issueComments, issueDocuments, issues, plugins } from "@paperclipai/db";
 import {
-  extractExternalObjectCanonicalUrls,
   formatExternalObjectMentionSourceLabel,
   type ExternalObjectCanonicalUrl,
   type ExternalObjectLivenessState,
@@ -12,6 +11,7 @@ import {
   type ExternalObjectStatusTone,
   type PaperclipPluginManifestV1,
 } from "@paperclipai/shared";
+import { extractExternalObjectCanonicalUrls } from "@paperclipai/shared/external-objects-server";
 import type { PluginExternalObjectRecordSnapshot, PluginExternalObjectResolveResult } from "@paperclipai/plugin-sdk";
 import { notFound } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -642,12 +642,10 @@ export function externalObjectService(
     };
   }
 
-  async function getIssueSummary(issueId: string) {
-    const groups = await listForIssue(issueId);
-    const objects = groups.flatMap((group) => (group.object ? [group.object] : []));
+  function summarizeObjectPayloads(objects: Array<ReturnType<typeof toObjectPayload>>, objectLimit = objects.length) {
     return {
       ...summarizeObjects(objects),
-      objects: objects.map((object) => ({
+      objects: objects.slice(0, objectLimit).map((object) => ({
         id: object.id,
         providerKey: object.providerKey,
         objectType: object.objectType,
@@ -658,6 +656,44 @@ export function externalObjectService(
         isTerminal: object.isTerminal,
       })),
     };
+  }
+
+  async function getIssueSummary(issueId: string) {
+    const groups = await listForIssue(issueId);
+    const objects = groups.flatMap((group) => (group.object ? [group.object] : []));
+    return summarizeObjectPayloads(objects);
+  }
+
+  async function getIssueSummaries(companyId: string, issueIds: string[]) {
+    const uniqueIssueIds = [...new Set(issueIds)].filter((id) => id.length > 0);
+    const summaries = new Map<string, ReturnType<typeof summarizeObjectPayloads>>();
+    if (uniqueIssueIds.length === 0) return summaries;
+
+    const rows = await db
+      .select({
+        issueId: externalObjectMentions.sourceIssueId,
+        object: externalObjects,
+      })
+      .from(externalObjectMentions)
+      .innerJoin(externalObjects, eq(externalObjectMentions.objectId, externalObjects.id))
+      .where(and(
+        eq(externalObjectMentions.companyId, companyId),
+        inArray(externalObjectMentions.sourceIssueId, uniqueIssueIds),
+      ));
+
+    const now = new Date();
+    const objectsByIssueId = new Map<string, Map<string, ReturnType<typeof toObjectPayload>>>();
+    for (const row of rows) {
+      const issueObjects = objectsByIssueId.get(row.issueId) ?? new Map<string, ReturnType<typeof toObjectPayload>>();
+      issueObjects.set(row.object.id, toObjectPayload(row.object, now));
+      objectsByIssueId.set(row.issueId, issueObjects);
+    }
+
+    for (const [issueId, issueObjects] of objectsByIssueId) {
+      const objects = [...issueObjects.values()];
+      if (objects.length > 0) summaries.set(issueId, summarizeObjectPayloads(objects));
+    }
+    return summaries;
   }
 
   async function getProjectSummary(projectId: string) {
@@ -681,19 +717,7 @@ export function externalObjectService(
     const objectsById = new Map<string, ReturnType<typeof toObjectPayload>>();
     for (const row of rows) objectsById.set(row.object.id, toObjectPayload(row.object, now));
     const objects = [...objectsById.values()];
-    return {
-      ...summarizeObjects(objects),
-      objects: objects.slice(0, 25).map((object) => ({
-        id: object.id,
-        providerKey: object.providerKey,
-        objectType: object.objectType,
-        displayTitle: object.displayTitle,
-        statusCategory: object.statusCategory,
-        statusTone: object.statusTone,
-        liveness: object.liveness,
-        isTerminal: object.isTerminal,
-      })),
-    };
+    return summarizeObjectPayloads(objects, 25);
   }
 
   async function refreshObject(
@@ -853,6 +877,7 @@ export function externalObjectService(
     syncDocumentSafely,
     listForIssue,
     getIssueSummary,
+    getIssueSummaries,
     getProjectSummary,
     refreshObject,
     refreshIssueObjects,

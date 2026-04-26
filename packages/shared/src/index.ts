@@ -537,11 +537,6 @@ export {
 } from "./issue-references.js";
 
 export {
-  buildExternalObjectScopedIdentityKey,
-  buildExternalObjectMentionSourceKey,
-  canonicalizeExternalObjectUrl,
-  extractExternalObjectCanonicalUrls,
-  findExternalObjectUrlMatches,
   formatExternalObjectMentionSourceLabel,
   type ExternalObjectCanonicalIdentity,
   type ExternalObjectCanonicalUrl,

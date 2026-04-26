@@ -23,6 +23,7 @@ const mockAgentService = vi.hoisted(() => ({
 
 const mockExternalObjectsService = vi.hoisted(() => ({
   getIssueSummary: vi.fn(),
+  getIssueSummaries: vi.fn(),
   listForIssue: vi.fn(),
   refreshIssueObjects: vi.fn(),
 }));
@@ -145,6 +146,9 @@ describe("external object routes", () => {
       { id: peerAgentId, companyId, reportsTo: null, permissions: { canCreateAgents: false } },
     ]);
     mockExternalObjectsService.getIssueSummary.mockResolvedValue({ total: 1, objects: [] });
+    mockExternalObjectsService.getIssueSummaries.mockResolvedValue(new Map([
+      [issueId, { total: 1, objects: [] }],
+    ]));
     mockExternalObjectsService.listForIssue.mockResolvedValue([]);
     mockExternalObjectsService.refreshIssueObjects.mockResolvedValue([
       { object: { id: "77777777-7777-4777-8777-777777777777" }, refreshed: false, reason: "no_resolver" },
@@ -168,6 +172,29 @@ describe("external object routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(1);
     expect(mockExternalObjectsService.getIssueSummary).toHaveBeenCalledWith(issueId);
+  });
+
+  it("allows board users to fetch company-scoped external object summaries in bulk", async () => {
+    const app = await createApp(boardActor());
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/issues/external-object-summaries`)
+      .send({ issueIds: [issueId] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.summaries[issueId].total).toBe(1);
+    expect(mockExternalObjectsService.getIssueSummaries).toHaveBeenCalledWith(companyId, [issueId]);
+  });
+
+  it("enforces company access on bulk external object summaries", async () => {
+    const app = await createApp({ ...ownerActor(), companyId: "other-company" });
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/issues/external-object-summaries`)
+      .send({ issueIds: [issueId] });
+
+    expect(res.status).toBe(403);
+    expect(mockExternalObjectsService.getIssueSummaries).not.toHaveBeenCalled();
   });
 
   it("requires active checkout ownership for agent manual refresh", async () => {

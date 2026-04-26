@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { formatExternalObjectMentionSourceLabel } from "./external-objects.js";
 import {
   buildExternalObjectMentionSourceKey,
   buildExternalObjectScopedIdentityKey,
   canonicalizeExternalObjectUrl,
   extractExternalObjectCanonicalUrls,
   findExternalObjectUrlMatches,
-  formatExternalObjectMentionSourceLabel,
-} from "./external-objects.js";
+} from "./external-objects-server.js";
 import { externalObjectProviderKeySchema, externalObjectTypeSchema } from "./validators/external-object.js";
 
 describe("external object references", () => {

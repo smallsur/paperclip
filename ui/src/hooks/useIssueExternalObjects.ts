@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   ExternalObjectMention,
@@ -12,9 +12,8 @@ import type { MarkdownExternalReferenceMap } from "../components/MarkdownBody";
 import type { ExternalObjectPillData } from "../components/ExternalObjectPill";
 
 /**
- * Browser-safe mention-source label. Mirrors the shared/server helper but
- * avoids importing `@paperclipai/shared/external-objects.ts` (which pulls in
- * `node:crypto`). Keep in sync with the shared formatter.
+ * Browser-side mention-source label. Keep in sync with the shared formatter
+ * without coupling this hook to the server-only URL canonicalization helpers.
  */
 function formatMentionSourceLabel(mention: ExternalObjectMention): string {
   switch (mention.sourceKind) {
@@ -130,12 +129,16 @@ export function useIssueExternalObjects(issueId: string | null | undefined): Iss
     return result;
   }, [groups]);
 
+  const refetch = useCallback(() => {
+    void query.refetch();
+  }, [query.refetch]);
+
   return {
     groups,
     markdownReferences,
     isLoading: enabled && query.isLoading,
     isError: query.isError,
-    refetch: () => { void query.refetch(); },
+    refetch,
   };
 }
 
@@ -152,6 +155,34 @@ export function useIssueExternalObjectSummary(issueId: string | null | undefined
   });
   return {
     summary: query.data ?? null,
+    isLoading: enabled && query.isLoading,
+  };
+}
+
+export function useIssueExternalObjectSummaries(
+  companyId: string | null | undefined,
+  issueIds: readonly string[],
+): {
+  summaries: Map<string, ExternalObjectSummary>;
+  isLoading: boolean;
+} {
+  const normalizedIssueIds = useMemo(
+    () => [...new Set(issueIds.filter((issueId) => issueId.length > 0))].sort(),
+    [issueIds],
+  );
+  const enabled = Boolean(companyId) && normalizedIssueIds.length > 0;
+  const query = useQuery({
+    queryKey: queryKeys.externalObjects.issueSummaries(companyId ?? "__none__", normalizedIssueIds),
+    queryFn: () => externalObjectsApi.getIssueSummaries(companyId!, normalizedIssueIds),
+    enabled,
+    staleTime: 60_000,
+  });
+  const summaries = useMemo(
+    () => new Map(Object.entries(query.data?.summaries ?? {})),
+    [query.data?.summaries],
+  );
+  return {
+    summaries,
     isLoading: enabled && query.isLoading,
   };
 }
