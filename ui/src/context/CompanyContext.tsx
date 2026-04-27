@@ -38,7 +38,7 @@ const CompanyContext = createContext<CompanyContextValue | null>(null);
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [selectionSource, setSelectionSource] = useState<CompanySelectionSource>("bootstrap");
-  const [selectedCompanyId, setSelectedCompanyIdState] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY));
+  const [selectedCompanyId, setSelectedCompanyIdState] = useState<string | null>(null);
 
   const { data: companies = [], isLoading, error } = useQuery({
     queryKey: queryKeys.companies.all,
@@ -61,18 +61,26 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   // Auto-select first company when list loads
   useEffect(() => {
-    if (companies.length === 0) return;
+    if (isLoading) return;
+    if (companies.length === 0) {
+      if (selectedCompanyId !== null) {
+        setSelectedCompanyIdState(null);
+      }
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
 
     const selectableCompanies = sidebarCompanies.length > 0 ? sidebarCompanies : companies;
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored && selectableCompanies.some((c) => c.id === stored)) return;
     if (selectedCompanyId && selectableCompanies.some((c) => c.id === selectedCompanyId)) return;
 
-    const next = selectableCompanies[0]!.id;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const next = stored && selectableCompanies.some((c) => c.id === stored)
+      ? stored
+      : selectableCompanies[0]!.id;
     setSelectedCompanyIdState(next);
     setSelectionSource("bootstrap");
     localStorage.setItem(STORAGE_KEY, next);
-  }, [companies, selectedCompanyId, sidebarCompanies]);
+  }, [companies, isLoading, selectedCompanyId, sidebarCompanies]);
 
   const setSelectedCompanyId = useCallback((companyId: string, options?: CompanySelectionOptions) => {
     setSelectedCompanyIdState(companyId);
