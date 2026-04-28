@@ -1303,35 +1303,45 @@ export function IssuesList({
                   const doneRowTitleClass = checklistMeta && issue.status === "done"
                     ? "text-muted-foreground"
                     : undefined;
-                  const checklistDependencyChips = checklistMeta && unresolvedVisibleBlockers.length > 0 ? (
+                  const visibleBlockerChips = unresolvedVisibleBlockers
+                    .map((blockerId) => {
+                      const blockerIssue = issueById.get(blockerId);
+                      if (!blockerIssue) return null;
+                      const label = blockerIssue.identifier ?? blockerIssue.id.slice(0, 8);
+                      const blockerStep = checklistMeta?.stepNumberByIssueId.get(blockerId);
+                      const blockerStepSuffix = blockerStep ? ` \u00b7 step ${blockerStep}` : "";
+                      return { blockerId, chipLabel: `blocked by ${label}${blockerStepSuffix}` };
+                    })
+                    .filter((chip): chip is { blockerId: string; chipLabel: string } => chip !== null);
+                  const firstVisibleBlockerChip = visibleBlockerChips[0] ?? null;
+                  const additionalVisibleBlockerCount = Math.max(visibleBlockerChips.length - 1, 0);
+                  const checklistDependencyChips = checklistMeta && firstVisibleBlockerChip ? (
                     <>
-                      {unresolvedVisibleBlockers.map((blockerId) => {
-                        const blockerIssue = issueById.get(blockerId);
-                        if (!blockerIssue) return null;
-                        const label = blockerIssue.identifier ?? blockerIssue.id.slice(0, 8);
-                        const blockerStep = checklistMeta.stepNumberByIssueId.get(blockerId);
-                        const blockerStepSuffix = blockerStep ? ` \u00b7 step ${blockerStep}` : "";
-                        const chipLabel = `blocked by ${label}${blockerStepSuffix}`;
-                        return (
-                          <button
-                            key={blockerId}
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              const target = document.getElementById(`issue-workflow-row-${blockerId}`);
-                              if (!target) return;
-                              target.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                              target.focus?.();
-                            }}
-                            className="inline-flex items-center rounded-full border border-amber-400/45 bg-amber-50/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100/80 dark:border-amber-300/35 dark:bg-amber-400/10 dark:text-amber-300"
-                            title={chipLabel}
-                            aria-label={chipLabel}
-                          >
-                            {chipLabel}
-                          </button>
-                        );
-                      })}
+                      <button
+                        key={firstVisibleBlockerChip.blockerId}
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          const target = document.getElementById(`issue-workflow-row-${firstVisibleBlockerChip.blockerId}`);
+                          if (!target) return;
+                          target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                          target.focus?.();
+                        }}
+                        className="inline-flex items-center rounded-full border border-amber-400/45 bg-amber-50/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100/80 dark:border-amber-300/35 dark:bg-amber-400/10 dark:text-amber-300"
+                        title={firstVisibleBlockerChip.chipLabel}
+                        aria-label={firstVisibleBlockerChip.chipLabel}
+                      >
+                        {firstVisibleBlockerChip.chipLabel}
+                      </button>
+                      {additionalVisibleBlockerCount > 0 ? (
+                        <span
+                          className="inline-flex items-center rounded-full border border-amber-400/30 bg-amber-50/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-300/25 dark:bg-amber-400/10 dark:text-amber-300"
+                          title={visibleBlockerChips.slice(1).map((chip) => chip.chipLabel).join(", ")}
+                        >
+                          ... and {additionalVisibleBlockerCount} more
+                        </span>
+                      ) : null}
                     </>
                   ) : null;
 
