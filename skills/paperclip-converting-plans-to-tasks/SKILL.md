@@ -1,16 +1,18 @@
 ---
-name: paperclip-plan
+name: paperclip-converting-plans-to-tasks
 description: >
-  The Paperclip way of planning. Use whenever you are asked to plan, scope, or
-  break down work inside a Paperclip company. Industry-agnostic guidance on how
-  to plan so that Paperclip's executor can pick up the work — it does not
-  prescribe a plan format. Pair with the `paperclip` skill, which covers the
-  mechanics of writing the plan document and reassigning the issue.
+  The Paperclip way of converting a plan into executable tasks. Use whenever
+  you are asked to plan, scope, or break down work inside a Paperclip company.
+  Industry-agnostic guidance on how to translate a plan into assigned issues
+  with the right specialty, dependencies, and parallelization so Paperclip's
+  executor can pick up the work — it does not prescribe a plan format. Pair
+  with the `paperclip` skill, which covers the mechanics of writing the plan
+  document and reassigning the issue.
 ---
 
-# Paperclip Plan
+# Paperclip — Converting Plans to Tasks
 
-A companion skill for planning. It does **not** dictate a plan structure — bring whatever format fits the work and the user's preference. It tells you _how_ to plan so that the rest of Paperclip works for you.
+A companion skill for turning a plan into executable Paperclip work. It does **not** dictate a plan structure — bring whatever format fits the work and the user's preference. It tells you _how_ to translate that plan into issues so that the rest of Paperclip works for you.
 
 For the **mechanics** of recording a plan (issue document with key `plan`, comment links, approval gating, who to reassign back to), follow the _Planning_ section of the `paperclip` skill. This skill covers planning method, not the API surface.
 

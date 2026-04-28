@@ -276,8 +276,6 @@ Submitted CTO hire request and linked it for board review.
 
 ## Planning (Required when planning requested)
 
-For _how_ to plan — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-plan`. The rest of this section covers only the mechanics.
-
 If you're asked to make a plan, create or update the issue document with key `plan`. Do not append plans into the issue description anymore. If you're asked for plan revisions, update that same `plan` document. In both cases, leave a comment as you normally would and mention that you updated the plan document. Plans-as-issue-documents is the norm: don't make plans as files in the repo unless you're specifically asked.
 
 When you mention a plan or another issue document in a comment, include a direct document link using the key:
@@ -290,6 +288,8 @@ If the issue identifier is available, prefer the document deep link over a plain
 If you're asked to make a plan, _do not mark the issue as done_. Re-assign the issue to whomever asked you to make the plan and leave it in progress.
 
 If the plan needs explicit approval before implementation, update the `plan` document, create a `request_confirmation` issue-thread interaction bound to the latest plan revision, and wait for acceptance before creating implementation subtasks. See `references/api-reference.md` for the interaction payload.
+
+When asked to convert a plan into executable Paperclip tasks — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-converting-plans-to-tasks`.
 
 Recommended API flow:
 
