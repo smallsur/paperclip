@@ -65,6 +65,13 @@ export function IssueRow({
   const selectedStatusClass = selected ? "!text-muted-foreground !border-muted-foreground" : undefined;
   const detailState = withIssueDetailHeaderSeed(issueLinkState, issue);
   const productivityReview = issue.productivityReview ?? null;
+  const recoveryLeafIdentifier =
+    issue.blockerAttention?.state === "recovery_needed"
+      ? issue.blockerAttention.sampleBlockerIdentifier
+      : null;
+  const recoveryLeafLabel = recoveryLeafIdentifier && recoveryLeafIdentifier !== identifier
+    ? `liveness break at ${recoveryLeafIdentifier}`
+    : null;
   const productivityReviewIndicator = productivityReview ? (
     <span
       className={cn(
@@ -130,6 +137,14 @@ export function IssueRow({
               </span>
             </>
           )}
+          {recoveryLeafLabel ? (
+            <>
+              <span className="text-xs text-muted-foreground" aria-hidden="true">
+                &middot;
+              </span>
+              <span className="text-xs text-muted-foreground">{recoveryLeafLabel}</span>
+            </>
+          ) : null}
           {mobileMeta ? (
             <>
               <span className="text-xs text-muted-foreground sm:hidden" aria-hidden="true">
