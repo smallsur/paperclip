@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, createRef, forwardRef, useImperativeHandle } from "react";
+import { act, createRef, forwardRef, useImperativeHandle, useState } from "react";
 import type { ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
@@ -687,6 +687,78 @@ describe("IssueChatThread", () => {
 
     expect(refreshMock).toHaveBeenCalledTimes(1);
 
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("uses comments rendered by onRefreshLatestComments before resolving latest", async () => {
+    const scrolledIds: string[] = [];
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn(function scrollIntoView(this: Element) {
+      scrolledIds.push(this.id);
+    }) as unknown as typeof Element.prototype.scrollIntoView;
+
+    const olderComment = {
+      id: "comment-before-refresh",
+      companyId: "company-1",
+      issueId: "issue-1",
+      authorAgentId: "agent-perf-codex",
+      authorUserId: null,
+      body: "Older loaded comment",
+      createdAt: new Date("2026-04-06T12:00:00.000Z"),
+      updatedAt: new Date("2026-04-06T12:00:00.000Z"),
+    };
+    const latestComment = {
+      ...olderComment,
+      id: "comment-after-refresh",
+      body: "Latest fetched comment",
+      createdAt: new Date("2026-04-06T12:01:00.000Z"),
+      updatedAt: new Date("2026-04-06T12:01:00.000Z"),
+    };
+
+    function RefreshingThread() {
+      const [comments, setComments] = useState([olderComment]);
+      return (
+        <IssueChatThread
+          comments={comments}
+          linkedRuns={[]}
+          timelineEvents={[]}
+          liveRuns={[]}
+          agentMap={issueChatLongThreadAgentMap}
+          currentUserId="user-board"
+          onAdd={async () => {}}
+          enableLiveTranscriptPolling={false}
+          onRefreshLatestComments={async () => {
+            setComments([olderComment, latestComment]);
+            await new Promise((resolve) => window.requestAnimationFrame(resolve));
+          }}
+        />
+      );
+    }
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <RefreshingThread />
+        </MemoryRouter>,
+      );
+    });
+
+    const jump = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Jump to latest",
+    ) as HTMLButtonElement | undefined;
+    expect(jump).toBeDefined();
+
+    await act(async () => {
+      jump?.click();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    });
+
+    expect(scrolledIds).toContain("comment-comment-after-refresh");
+
+    Element.prototype.scrollIntoView = originalScrollIntoView;
     act(() => {
       root.unmount();
     });

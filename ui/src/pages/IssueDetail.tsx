@@ -48,6 +48,7 @@ import {
   flattenIssueCommentPages,
   getNextIssueCommentPageParam,
   isQueuedIssueComment,
+  loadRemainingIssueCommentPages,
   matchesIssueRef,
   mergeIssueComments,
   removeIssueCommentFromPages,
@@ -2561,12 +2562,34 @@ export function IssueDetail() {
     void fetchOlderComments();
   }, [fetchOlderComments]);
   const refetchLatestComments = useCallback(async () => {
-    // Refetches every loaded page (page 0 first), so any comment that
-    // landed after the initial load — including ones live updates may
-    // have dropped on reconnect — is in cache before we scroll the user
-    // to the absolute newest.
-    await refetchComments();
-  }, [refetchComments]);
+    // Refetch page 0 first so comments that arrived after initial load are
+    // visible, then load every remaining older page. The chat thread is
+    // paginated and virtualized, so "latest" must be resolved against the
+    // complete comment set rather than the current loaded window.
+    const refreshed = await refetchComments();
+    const loaded = await loadRemainingIssueCommentPages<IssueComment>({
+      pages: refreshed.data?.pages,
+      pageParams: refreshed.data?.pageParams as Array<string | null> | undefined,
+      pageSize: ISSUE_COMMENT_PAGE_SIZE,
+      fetchPage: (afterCommentId) =>
+        issuesApi.listComments(issueId!, {
+          order: "desc",
+          limit: ISSUE_COMMENT_PAGE_SIZE,
+          after: afterCommentId,
+        }),
+    });
+    queryClient.setQueryData<InfiniteData<IssueComment[], string | null>>(
+      queryKeys.issues.comments(issueId!),
+      loaded,
+    );
+    await new Promise<void>((resolve) => {
+      if (typeof window === "undefined") {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(() => resolve());
+    });
+  }, [issueId, queryClient, refetchComments]);
   useEffect(() => {
     if (!shouldPrefetchOlderComments) return;
     void fetchOlderComments();

@@ -3087,6 +3087,8 @@ export function IssueChatThread({
     stableMessageCacheRef.current = stabilized.cache;
     return stabilized.messages;
   }, [rawMessages]);
+  const latestMessagesRef = useRef<readonly ThreadMessage[]>(messages);
+  latestMessagesRef.current = messages;
 
   const isRunning = displayLiveRuns.some((run) => run.status === "queued" || run.status === "running");
   const unresolvedBlockers = useMemo(
@@ -3119,9 +3121,14 @@ export function IssueChatThread({
   function scrollToThreadAnchor(
     anchorId: string,
     options?: { align?: "start" | "center" | "end" | "auto"; behavior?: ScrollBehavior },
+    messageSnapshot: readonly ThreadMessage[] = messages,
   ) {
-    const virtualIndex = messageAnchorIndex.get(anchorId);
-    if (useVirtualizedThread && virtualIndex !== undefined) {
+    const snapshotUsesVirtualizer = messageSnapshot.length >= VIRTUALIZED_THREAD_ROW_THRESHOLD;
+    const virtualIndex =
+      messageSnapshot === messages
+        ? messageAnchorIndex.get(anchorId)
+        : findMessageAnchorIndex(messageSnapshot, anchorId);
+    if (snapshotUsesVirtualizer && virtualIndex !== undefined && virtualIndex >= 0) {
       if (!virtualizedThreadRef.current) return false;
       virtualizedThreadRef.current.scrollToIndex(virtualIndex, {
         align: options?.align ?? "center",
@@ -3261,19 +3268,23 @@ export function IssueChatThread({
   // on the latest comment element on every tick until the DOM bottom of
   // that element is at the scroll container's bottom (or scroll position
   // and content height stop changing).
-  function scrollToLatestCommentWithSettle() {
-    const latestCommentIndex = findLatestCommentMessageIndex(messages);
+  function scrollToLatestCommentWithSettle(messageSnapshot: readonly ThreadMessage[] = latestMessagesRef.current) {
+    const latestCommentIndex = findLatestCommentMessageIndex(messageSnapshot);
     if (latestCommentIndex < 0) {
       jumpToLatestFallback();
       return;
     }
-    const latestCommentAnchor = issueChatMessageAnchorId(messages[latestCommentIndex]);
+    const latestCommentAnchor = issueChatMessageAnchorId(messageSnapshot[latestCommentIndex]);
     if (!latestCommentAnchor) {
       jumpToLatestFallback();
       return;
     }
 
-    const initial = scrollToThreadAnchor(latestCommentAnchor, { align: "end", behavior: "smooth" });
+    const initial = scrollToThreadAnchor(
+      latestCommentAnchor,
+      { align: "end", behavior: "smooth" },
+      messageSnapshot,
+    );
     if (!initial) {
       jumpToLatestFallback();
       return;
@@ -3352,13 +3363,13 @@ export function IssueChatThread({
       const refreshed = onRefreshLatestComments();
       if (refreshed && typeof (refreshed as Promise<unknown>).then === "function") {
         (refreshed as Promise<unknown>).then(
-          () => scrollToLatestCommentWithSettle(),
-          () => scrollToLatestCommentWithSettle(),
+          () => scrollToLatestCommentWithSettle(latestMessagesRef.current),
+          () => scrollToLatestCommentWithSettle(latestMessagesRef.current),
         );
         return;
       }
     }
-    scrollToLatestCommentWithSettle();
+    scrollToLatestCommentWithSettle(latestMessagesRef.current);
   }
 
   const stableOnVote = useStableEvent(onVote);
