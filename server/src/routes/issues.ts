@@ -603,38 +603,22 @@ export function issueRoutes(
       res.status(403).json({ error: "Agent authentication required" });
       return false;
     }
-    if (issue.assigneeAgentId === null) {
+    if (issue.status !== "in_progress" || issue.assigneeAgentId === null) {
       return true;
     }
     if (issue.assigneeAgentId !== actorAgentId) {
       if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
         return true;
       }
-      if (issue.status === "in_progress") {
-        res.status(409).json({
-          error: "Issue is checked out by another agent",
-          details: {
-            issueId: issue.id,
-            assigneeAgentId: issue.assigneeAgentId,
-            actorAgentId,
-          },
-        });
-      } else {
-        res.status(403).json({
-          error: "Agent cannot mutate another agent's issue",
-          details: {
-            issueId: issue.id,
-            assigneeAgentId: issue.assigneeAgentId,
-            actorAgentId,
-            status: issue.status,
-            securityPrinciples: ["Least Privilege", "Complete Mediation", "Fail Securely"],
-          },
-        });
-      }
+      res.status(409).json({
+        error: "Issue is checked out by another agent",
+        details: {
+          issueId: issue.id,
+          assigneeAgentId: issue.assigneeAgentId,
+          actorAgentId,
+        },
+      });
       return false;
-    }
-    if (issue.status !== "in_progress") {
-      return true;
     }
     const runId = requireAgentRunId(req, res);
     if (!runId) return false;
@@ -671,7 +655,6 @@ export function issueRoutes(
         details: {
           issueId: issue.id,
           status: issue.status,
-          securityPrinciples: ["Complete Mediation", "Fail Securely"],
         },
       });
       return false;
@@ -694,7 +677,6 @@ export function issueRoutes(
           holdId: activePauseHold.holdId,
           rootIssueId: activePauseHold.rootIssueId,
           mode: activePauseHold.mode,
-          securityPrinciples: ["Complete Mediation", "Fail Securely", "Secure Defaults"],
         },
       });
       return false;
