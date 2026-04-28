@@ -182,6 +182,8 @@ Exclude Paperclip founders from the list (e.g. `cryppadotta`, `forgottendev`, `d
 
 List contributors in alphabetical order by GitHub username (case-insensitive).
 
+If there are no contributors left after exclusions, then just skip this section and don't mention it.
+
 ## Step 6 — Review Before Release
 
 Before handing it off:
