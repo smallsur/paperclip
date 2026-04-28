@@ -504,6 +504,37 @@ describe.sequential("agent skill routes", () => {
     });
   });
 
+  it("clears legacy prompt templates when directly created local agents already provide instructions", async () => {
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "QA Agent",
+        role: "engineer",
+        adapterType: "claude_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/existing/AGENTS.md",
+          promptTemplate: "You are QA.",
+          bootstrapPromptTemplate: "Bootstrap QA.",
+        },
+      }));
+
+    expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
+    expect(mockAgentInstructionsService.materializeManagedBundle).not.toHaveBeenCalled();
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({
+          instructionsFilePath: "/tmp/existing/AGENTS.md",
+        }),
+      }),
+    );
+    const updateInput = mockAgentService.update.mock.calls.at(-1)?.[1] as
+      | { adapterConfig?: Record<string, unknown> }
+      | undefined;
+    expect(updateInput?.adapterConfig?.promptTemplate).toBeUndefined();
+    expect(updateInput?.adapterConfig?.bootstrapPromptTemplate).toBeUndefined();
+  });
+
   it("materializes the bundled CEO instruction set for default CEO agents", async () => {
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/agents")
@@ -674,5 +705,38 @@ describe.sequential("agent skill routes", () => {
       | { payload?: { adapterConfig?: Record<string, unknown> } }
       | undefined;
     expect(approvalInput?.payload?.adapterConfig?.promptTemplate).toBeUndefined();
+  });
+
+  it("clears legacy prompt templates from hire approval payloads that already provide instructions", async () => {
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "engineer",
+        adapterType: "claude_local",
+        adapterConfig: {
+          instructionsFilePath: "/tmp/existing/AGENTS.md",
+          promptTemplate: "You are QA.",
+          bootstrapPromptTemplate: "Bootstrap QA.",
+        },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentInstructionsService.materializeManagedBundle).not.toHaveBeenCalled();
+    expect(mockApprovalService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          adapterConfig: expect.objectContaining({
+            instructionsFilePath: "/tmp/existing/AGENTS.md",
+          }),
+        }),
+      }),
+    );
+    const approvalInput = mockApprovalService.create.mock.calls.at(-1)?.[1] as
+      | { payload?: { adapterConfig?: Record<string, unknown> } }
+      | undefined;
+    expect(approvalInput?.payload?.adapterConfig?.promptTemplate).toBeUndefined();
+    expect(approvalInput?.payload?.adapterConfig?.bootstrapPromptTemplate).toBeUndefined();
   });
 });

@@ -41,7 +41,7 @@ If you are hiring a role that is not in this index, do not force a fit. Use the 
 ## How to apply an exact template
 
 1. Open the matching reference in `references/agents/`.
-2. Copy that template into the new agent's instruction bundle (usually `AGENTS.md`). For hire requests using local managed-bundle adapters, set the adapted template as `adapterConfig.promptTemplate`; Paperclip materializes it into `AGENTS.md`.
+2. Copy that template into the new agent's instruction bundle (usually `AGENTS.md`). For agent-authenticated hire requests using local managed-bundle adapters, `adapterConfig.promptTemplate` is only a creation-time transport for the adapted template; Paperclip materializes it into managed `AGENTS.md` and removes the legacy field. Do not combine `promptTemplate` with an explicit instructions bundle/path.
 3. Replace placeholders like `{{companyName}}`, `{{managerTitle}}`, `{{issuePrefix}}`, and URLs.
 4. Remove tools or workflows the target adapter cannot use.
 5. Keep the Paperclip heartbeat requirement and the task-comment requirement.

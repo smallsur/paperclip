@@ -703,7 +703,16 @@ export function agentRoutes(
       || Boolean(asNonEmptyString(adapterConfig.instructionsFilePath))
       || Boolean(asNonEmptyString(adapterConfig.agentsMdPath));
     if (hasExplicitInstructionsBundle) {
-      return agent;
+      const nextAdapterConfig = { ...adapterConfig };
+      const hadLegacyPrompt =
+        Object.prototype.hasOwnProperty.call(nextAdapterConfig, "promptTemplate")
+        || Object.prototype.hasOwnProperty.call(nextAdapterConfig, "bootstrapPromptTemplate");
+      delete nextAdapterConfig.promptTemplate;
+      delete nextAdapterConfig.bootstrapPromptTemplate;
+      if (!hadLegacyPrompt) return agent;
+
+      const updated = await svc.update(agent.id, { adapterConfig: nextAdapterConfig });
+      return (updated as T | null) ?? { ...agent, adapterConfig: nextAdapterConfig };
     }
 
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
