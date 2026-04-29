@@ -140,6 +140,26 @@ describe("issue validators", () => {
     expect(parsed.runtimeConfig.heartbeat).toEqual({ enabled: true });
   });
 
+  it("validates cheap model profile env bindings like top-level adapter config", () => {
+    const parsed = createAgentSchema.safeParse({
+      name: "Coder",
+      adapterType: "codex_local",
+      runtimeConfig: {
+        modelProfiles: {
+          cheap: {
+            adapterConfig: {
+              env: {
+                API_TOKEN: 123,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("rejects unknown agent runtime model profile keys", () => {
     const parsed = createAgentSchema.safeParse({
       name: "Coder",
