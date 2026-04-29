@@ -117,7 +117,7 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
     });
   }
 
-  async function seedBlockedChain(opts: { outsideLookback?: boolean } = {}) {
+  async function seedBlockedChain(opts: { outsideLookback?: boolean; freshUpdateOutsideLookback?: boolean } = {}) {
     const companyId = randomUUID();
     const managerId = randomUUID();
     const coderId = randomUUID();
@@ -161,6 +161,9 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
     const issueTimestamp = opts.outsideLookback === true
       ? new Date(Date.now() - 25 * 60 * 60 * 1000)
       : new Date(Date.now() - 60 * 60 * 1000);
+    const updatedAt = opts.freshUpdateOutsideLookback === true
+      ? new Date(Date.now() - 60 * 60 * 1000)
+      : issueTimestamp;
     await db.insert(issues).values([
       {
         id: blockedIssueId,
@@ -172,7 +175,7 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
         issueNumber: 1,
         identifier: `${issuePrefix}-1`,
         createdAt: issueTimestamp,
-        updatedAt: issueTimestamp,
+        updatedAt,
       },
       {
         id: blockerIssueId,
@@ -183,7 +186,7 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
         issueNumber: 2,
         identifier: `${issuePrefix}-2`,
         createdAt: issueTimestamp,
-        updatedAt: issueTimestamp,
+        updatedAt,
       },
     ]);
 
@@ -221,6 +224,27 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
   it("does not create recovery issues outside the configured lookback window", async () => {
     await enableAutoRecovery();
     const { companyId } = await seedBlockedChain({ outsideLookback: true });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileIssueGraphLiveness();
+
+    expect(result.findings).toBe(1);
+    expect(result.escalationsCreated).toBe(0);
+    expect(result.skippedOutsideLookback).toBe(1);
+
+    const escalations = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "harness_liveness_escalation")));
+    expect(escalations).toHaveLength(0);
+  });
+
+  it("does not create recovery issues for old legacy findings that were only updated recently", async () => {
+    await enableAutoRecovery();
+    const { companyId } = await seedBlockedChain({
+      outsideLookback: true,
+      freshUpdateOutsideLookback: true,
+    });
     const heartbeat = heartbeatService(db);
 
     const result = await heartbeat.reconcileIssueGraphLiveness();
