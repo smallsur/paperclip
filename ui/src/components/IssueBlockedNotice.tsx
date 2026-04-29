@@ -434,42 +434,31 @@ export function IssueBlockedNotice({
 
   const explicitWaitingPills = (() => {
     if (!showExplicitWaiting) return null;
+    const pillClass =
+      "inline-flex max-w-full items-center gap-1 rounded-md border border-sky-300/70 bg-white/80 px-1.5 py-0.5 text-[11px] font-medium text-sky-900 dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100";
+    const labelClass =
+      "shrink-0 text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80";
+    const valueClass = "min-w-0 break-words";
     const pills: React.ReactNode[] = [];
     if (explicitWaitingTargetLabel) {
       pills.push(
-        <span
-          key="target"
-          className="inline-flex items-center gap-1 rounded-md border border-sky-300/70 bg-white/80 px-1.5 py-0.5 text-[11px] font-medium text-sky-900 dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100"
-        >
-          <span className="text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80">
-            Target
-          </span>
-          <span className="truncate max-w-[16rem]">{explicitWaitingTargetLabel}</span>
+        <span key="target" className={pillClass}>
+          <span className={labelClass}>Target</span>
+          <span className={valueClass}>{explicitWaitingTargetLabel}</span>
         </span>,
       );
     }
     pills.push(
-      <span
-        key="owner"
-        className="inline-flex items-center gap-1 rounded-md border border-sky-300/70 bg-white/80 px-1.5 py-0.5 text-[11px] font-medium text-sky-900 dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100"
-      >
-        <span className="text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80">
-          Owner
-        </span>
-        <span className="truncate max-w-[12rem]">{ownerLabel}</span>
+      <span key="owner" className={pillClass}>
+        <span className={labelClass}>Owner</span>
+        <span className={valueClass}>{ownerLabel}</span>
       </span>,
     );
     if (explicitWaitingResumeLabel) {
       pills.push(
-        <span
-          key="resume"
-          className="inline-flex items-center gap-1 rounded-md border border-sky-300/70 bg-white/80 px-1.5 py-0.5 text-[11px] font-medium text-sky-900 dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100"
-          title={explicitWaitingResumeLabel}
-        >
-          <span className="text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80">
-            Resume
-          </span>
-          <span className="truncate max-w-[24rem]">{explicitWaitingResumeLabel}</span>
+        <span key="resume" className={pillClass} title={explicitWaitingResumeLabel}>
+          <span className={labelClass}>Resume</span>
+          <span className={valueClass}>{explicitWaitingResumeLabel}</span>
         </span>,
       );
     }
