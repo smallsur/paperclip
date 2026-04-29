@@ -61,8 +61,6 @@ type ExtensionDefinition = {
   schema_name: string;
 };
 
-const DRIZZLE_SCHEMA = "drizzle";
-const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 const DEFAULT_BACKUP_WRITE_BUFFER_BYTES = 1024 * 1024;
 const BACKUP_DATA_CURSOR_ROWS = 100;
 const BACKUP_CLI_STDERR_BYTES = 64 * 1024;
@@ -229,6 +227,13 @@ function tableKey(schemaName: string, tableName: string): string {
   return `${schemaName}.${tableName}`;
 }
 
+function nonSystemSchemaPredicate(identifier: string): string {
+  return `${identifier} NOT IN ('pg_catalog', 'information_schema')
+    AND ${identifier} NOT LIKE 'pg_toast%'
+    AND ${identifier} NOT LIKE 'pg_temp_%'
+    AND ${identifier} NOT LIKE 'pg_toast_temp_%'`;
+}
+
 function hasBackupTransforms(opts: RunDatabaseBackupOptions): boolean {
   return opts.includeMigrationJournal === true ||
     (opts.excludeTables?.length ?? 0) > 0 ||
@@ -285,7 +290,6 @@ async function runPgDumpBackup(opts: {
       "--if-exists",
       "--no-owner",
       "--no-privileges",
-      "--schema=public",
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
@@ -484,7 +488,6 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
   const backupEngine = opts.backupEngine ?? "auto";
   const canUsePgDump = !hasBackupTransforms(opts);
-  const includeMigrationJournal = opts.includeMigrationJournal === true;
   const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
   let sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
@@ -552,31 +555,24 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       SELECT table_schema AS schema_name, table_name AS tablename
       FROM information_schema.tables
       WHERE table_type = 'BASE TABLE'
-        AND (
-          table_schema = 'public'
-          OR (${includeMigrationJournal}::boolean AND table_schema = ${DRIZZLE_SCHEMA} AND table_name = ${DRIZZLE_MIGRATIONS_TABLE})
-        )
+        AND ${sql.unsafe(nonSystemSchemaPredicate("table_schema"))}
       ORDER BY table_schema, table_name
     `;
     const tables = allTables;
     const includedTableNames = new Set(tables.map(({ schema_name, tablename }) => tableKey(schema_name, tablename)));
+    const includedSchemas = new Set(tables.map(({ schema_name }) => schema_name));
 
     // Get all enums
-    const enums = await sql<{ typname: string; labels: string[] }[]>`
-      SELECT t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
+    const enums = await sql<{ schema_name: string; typname: string; labels: string[] }[]>`
+      SELECT n.nspname AS schema_name, t.typname, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS labels
       FROM pg_type t
       JOIN pg_enum e ON t.oid = e.enumtypid
       JOIN pg_namespace n ON t.typnamespace = n.oid
-      WHERE n.nspname = 'public'
-      GROUP BY t.typname
-      ORDER BY t.typname
+      WHERE ${sql.unsafe(nonSystemSchemaPredicate("n.nspname"))}
+      GROUP BY n.nspname, t.typname
+      ORDER BY n.nspname, t.typname
     `;
-
-    for (const e of enums) {
-      const labels = e.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(", ");
-      emitStatement(`CREATE TYPE "public"."${e.typname}" AS ENUM (${labels});`);
-    }
-    if (enums.length > 0) emit("");
+    for (const e of enums) includedSchemas.add(e.schema_name);
 
     const allSequences = await sql<SequenceDefinition[]>`
       SELECT
@@ -598,15 +594,14 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       LEFT JOIN pg_class tbl ON tbl.oid = dep.refobjid
       LEFT JOIN pg_namespace tblns ON tblns.oid = tbl.relnamespace
       LEFT JOIN pg_attribute attr ON attr.attrelid = tbl.oid AND attr.attnum = dep.refobjsubid
-      WHERE s.sequence_schema = 'public'
-         OR (${includeMigrationJournal}::boolean AND s.sequence_schema = ${DRIZZLE_SCHEMA})
+      WHERE ${sql.unsafe(nonSystemSchemaPredicate("s.sequence_schema"))}
       ORDER BY s.sequence_schema, s.sequence_name
     `;
     const sequences = allSequences.filter(
       (seq) => !seq.owner_table || includedTableNames.has(tableKey(seq.owner_schema ?? "public", seq.owner_table)),
     );
 
-    const schemas = new Set<string>();
+    const schemas = new Set<string>(includedSchemas);
     for (const table of tables) schemas.add(table.schema_name);
     for (const seq of sequences) schemas.add(seq.sequence_schema);
     const extraSchemas = [...schemas].filter((schemaName) => schemaName !== "public");
@@ -617,6 +612,12 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       }
       emit("");
     }
+
+    for (const e of enums) {
+      const labels = e.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(", ");
+      emitStatement(`CREATE TYPE ${quoteQualifiedName(e.schema_name, e.typname)} AS ENUM (${labels});`);
+    }
+    if (enums.length > 0) emit("");
 
     const extensions = await sql<ExtensionDefinition[]>`
       SELECT
@@ -655,6 +656,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       const columns = await sql<{
         column_name: string;
         data_type: string;
+        udt_schema: string;
         udt_name: string;
         is_nullable: string;
         column_default: string | null;
@@ -662,7 +664,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
         numeric_precision: number | null;
         numeric_scale: number | null;
       }[]>`
-        SELECT column_name, data_type, udt_name, is_nullable, column_default,
+        SELECT column_name, data_type, udt_schema, udt_name, is_nullable, column_default,
                character_maximum_length, numeric_precision, numeric_scale
         FROM information_schema.columns
         WHERE table_schema = ${schema_name} AND table_name = ${tablename}
@@ -676,9 +678,12 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       for (const col of columns) {
         let typeStr: string;
         if (col.data_type === "USER-DEFINED") {
-          typeStr = `"${col.udt_name}"`;
+          typeStr = quoteQualifiedName(col.udt_schema, col.udt_name);
         } else if (col.data_type === "ARRAY") {
-          typeStr = `${col.udt_name.replace(/^_/, "")}[]`;
+          const elementType = col.udt_name.replace(/^_/, "");
+          typeStr = col.udt_schema === "pg_catalog"
+            ? `${elementType}[]`
+            : `${quoteQualifiedName(col.udt_schema, elementType)}[]`;
         } else if (col.data_type === "character varying") {
           typeStr = col.character_maximum_length
             ? `varchar(${col.character_maximum_length})`
@@ -761,10 +766,8 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       JOIN pg_namespace tgtn ON tgtn.oid = tgt.relnamespace
       JOIN pg_attribute sa ON sa.attrelid = src.oid AND sa.attnum = ANY(c.conkey)
       JOIN pg_attribute ta ON ta.attrelid = tgt.oid AND ta.attnum = ANY(c.confkey)
-      WHERE c.contype = 'f' AND (
-        srcn.nspname = 'public'
-        OR (${includeMigrationJournal}::boolean AND srcn.nspname = ${DRIZZLE_SCHEMA})
-      )
+      WHERE c.contype = 'f'
+        AND ${sql.unsafe(nonSystemSchemaPredicate("srcn.nspname"))}
       GROUP BY c.conname, srcn.nspname, src.relname, tgtn.nspname, tgt.relname, c.confupdtype, c.confdeltype
       ORDER BY srcn.nspname, src.relname, c.conname
     `;
@@ -800,10 +803,8 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       JOIN pg_class t ON t.oid = c.conrelid
       JOIN pg_namespace n ON n.oid = t.relnamespace
       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
-      WHERE c.contype = 'u' AND (
-        n.nspname = 'public'
-        OR (${includeMigrationJournal}::boolean AND n.nspname = ${DRIZZLE_SCHEMA})
-      )
+      WHERE c.contype = 'u'
+        AND ${sql.unsafe(nonSystemSchemaPredicate("n.nspname"))}
       GROUP BY c.conname, n.nspname, t.relname
       ORDER BY n.nspname, t.relname, c.conname
     `;
@@ -822,10 +823,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     const allIndexes = await sql<{ schema_name: string; tablename: string; indexdef: string }[]>`
       SELECT schemaname AS schema_name, tablename, indexdef
       FROM pg_indexes
-      WHERE (
-          schemaname = 'public'
-          OR (${includeMigrationJournal}::boolean AND schemaname = ${DRIZZLE_SCHEMA})
-        )
+      WHERE ${sql.unsafe(nonSystemSchemaPredicate("schemaname"))}
         AND indexname NOT IN (
           SELECT conname FROM pg_constraint c
           JOIN pg_namespace n ON n.oid = c.connamespace
