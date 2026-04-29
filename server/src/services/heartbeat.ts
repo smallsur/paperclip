@@ -7304,11 +7304,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return wakeupIds.length;
   }
 
-  async function cancelRunInternal(
-    runId: string,
-    reason = "Cancelled by control plane",
-    opts?: { startNextQueuedRun?: boolean },
-  ) {
+  async function cancelRunInternal(runId: string, reason = "Cancelled by control plane") {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
     if (!CANCELLABLE_HEARTBEAT_RUN_STATUSES.includes(run.status as (typeof CANCELLABLE_HEARTBEAT_RUN_STATUSES)[number])) return run;
@@ -7358,88 +7354,8 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
 
     runningProcesses.delete(run.id);
     await finalizeAgentStatus(run.agentId, "cancelled");
-    if (opts?.startNextQueuedRun !== false) {
-      await startNextQueuedRunForAgent(run.agentId);
-    }
+    await startNextQueuedRunForAgent(run.agentId);
     return cancelled;
-  }
-
-  async function cancelIssueRunsInternal(input: {
-    companyId: string;
-    issueId: string;
-    reason?: string;
-  }) {
-    const reason = input.reason ?? "Cancelled because the issue was cancelled";
-    const now = new Date();
-
-    const cancelledWakeups = await db
-      .update(agentWakeupRequests)
-      .set({
-        status: "cancelled",
-        finishedAt: now,
-        error: reason,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(agentWakeupRequests.companyId, input.companyId),
-          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
-          isNull(agentWakeupRequests.runId),
-          sql`${agentWakeupRequests.payload} ->> 'issueId' = ${input.issueId}`,
-        ),
-      )
-      .returning({
-        id: agentWakeupRequests.id,
-        agentId: agentWakeupRequests.agentId,
-        reason: agentWakeupRequests.reason,
-        status: agentWakeupRequests.status,
-        payload: agentWakeupRequests.payload,
-      });
-
-    const issue = await db
-      .select({
-        executionRunId: issues.executionRunId,
-      })
-      .from(issues)
-      .where(and(eq(issues.companyId, input.companyId), eq(issues.id, input.issueId)))
-      .then((rows) => rows[0] ?? null);
-
-    const contextIssueId = sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`;
-    const runs = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(
-        and(
-          eq(heartbeatRuns.companyId, input.companyId),
-          inArray(heartbeatRuns.status, [...CANCELLABLE_HEARTBEAT_RUN_STATUSES]),
-          issue?.executionRunId
-            ? or(eq(heartbeatRuns.id, issue.executionRunId), sql`${contextIssueId} = ${input.issueId}`)
-            : sql`${contextIssueId} = ${input.issueId}`,
-        ),
-      )
-      .orderBy(
-        sql`case when ${heartbeatRuns.status} = 'running' then 0 when ${heartbeatRuns.status} = 'queued' then 1 else 2 end`,
-        asc(heartbeatRuns.createdAt),
-      );
-
-    const cancelledRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
-    const affectedAgentIds = new Set<string>();
-    for (const run of runs) {
-      const cancelled = await cancelRunInternal(run.id, reason, { startNextQueuedRun: false });
-      affectedAgentIds.add(run.agentId);
-      if (cancelled?.status === "cancelled") {
-        cancelledRuns.push(cancelled);
-      }
-    }
-
-    for (const agentId of affectedAgentIds) {
-      await startNextQueuedRunForAgent(agentId);
-    }
-
-    return {
-      runs: cancelledRuns,
-      wakeups: cancelledWakeups,
-    };
   }
 
   async function cancelActiveForAgentInternal(agentId: string, reason = "Cancelled due to agent pause") {
@@ -7816,9 +7732,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       return { checked, enqueued, skipped };
     },
 
-    cancelRun: (runId: string, reason?: string) => cancelRunInternal(runId, reason),
-
-    cancelIssueRuns: (input: { companyId: string; issueId: string; reason?: string }) => cancelIssueRunsInternal(input),
+    cancelRun: (runId: string) => cancelRunInternal(runId),
 
     cancelActiveForAgent: (agentId: string) => cancelActiveForAgentInternal(agentId),
 

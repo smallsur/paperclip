@@ -411,7 +411,6 @@ describe("IssueRunLedger", () => {
     expect(container.textContent).toContain("Stale-run watchdog alert");
     expect(container.textContent).toContain("PAP-404");
     expect(container.textContent).toContain("Stale run");
-    expect(container.textContent).toContain("assigned recovery owner can cancel this bound run");
     const watchdogBanner = Array.from(container.querySelectorAll("p"))
       .find((node) => node.textContent?.includes("Stale-run watchdog alert"))
       ?.closest("div");
@@ -430,20 +429,6 @@ describe("IssueRunLedger", () => {
       decision: "continue",
       evaluationIssueId: "issue-eval-1",
     });
-
-    const cancelButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("Cancel run"),
-    );
-    expect(cancelButton).not.toBeUndefined();
-    act(() => {
-      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onWatchdogDecision).toHaveBeenCalledWith({
-      runId: "run-live-1",
-      decision: "cancel_run",
-      evaluationIssueId: "issue-eval-1",
-      reason: "Cancelled from stale-run recovery banner",
-    });
   });
 
   it("hides watchdog decision actions for known non-owner viewers", () => {
@@ -460,7 +445,6 @@ describe("IssueRunLedger", () => {
     expect(container.textContent).not.toContain("Continue monitoring");
     expect(container.textContent).not.toContain("Snooze 1h");
     expect(container.textContent).not.toContain("Mark false positive");
-    expect(container.textContent).not.toContain("Cancel run");
     expect(container.querySelectorAll("button")).toHaveLength(0);
     expect(onWatchdogDecision).not.toHaveBeenCalled();
   });

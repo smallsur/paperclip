@@ -20,24 +20,8 @@ interface StatusIconProps {
   showLabel?: boolean;
 }
 
-function explicitWaitingTooltipBase(blockerAttention: IssueBlockerAttention | null | undefined): string {
-  const owner = blockerAttention?.nextActionOwner ?? null;
-  if (!owner) return "Waiting on a decision";
-  if (owner.type === "user") {
-    return owner.userId ? "Waiting on user" : "Waiting on board";
-  }
-  if (owner.type === "agent") {
-    return "Waiting on agent";
-  }
-  return "Waiting on a decision";
-}
-
 function blockedAttentionLabel(blockerAttention: IssueBlockerAttention | null | undefined) {
   if (!blockerAttention || blockerAttention.state === "none") return "Blocked";
-
-  if (blockerAttention.reason === "explicit_waiting") {
-    return explicitWaitingTooltipBase(blockerAttention);
-  }
 
   if (blockerAttention.reason === "active_child") {
     const count = blockerAttention.coveredBlockerCount;
@@ -95,42 +79,27 @@ function blockedAttentionLabel(blockerAttention: IssueBlockerAttention | null | 
 
 export function StatusIcon({ status, blockerAttention, onChange, className, showLabel }: StatusIconProps) {
   const [open, setOpen] = useState(false);
-  const isExplicitWaiting =
-    blockerAttention?.state === "covered"
-    && blockerAttention?.reason === "explicit_waiting";
-  const isCoveredBlocked = status === "blocked"
-    && blockerAttention?.state === "covered"
-    && !isExplicitWaiting;
+  const isCoveredBlocked = status === "blocked" && blockerAttention?.state === "covered";
   const isStalledBlocked = status === "blocked" && blockerAttention?.state === "stalled";
   const isRecoveryNeeded = blockerAttention?.state === "recovery_needed";
-  const colorClass = isExplicitWaiting
-    ? "text-sky-600 border-sky-600 dark:text-sky-400 dark:border-sky-400"
-    : isCoveredBlocked
-      ? "text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400"
-      : isStalledBlocked
-        ? "text-amber-600 border-amber-600 dark:text-amber-400 dark:border-amber-400"
-        : isRecoveryNeeded
-          ? "text-red-600 border-red-600 dark:text-red-400 dark:border-red-400"
-          : issueStatusIcon[status] ?? issueStatusIconDefault;
+  const colorClass = isCoveredBlocked
+    ? "text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400"
+    : isStalledBlocked
+      ? "text-amber-600 border-amber-600 dark:text-amber-400 dark:border-amber-400"
+      : isRecoveryNeeded
+        ? "text-red-600 border-red-600 dark:text-red-400 dark:border-red-400"
+        : issueStatusIcon[status] ?? issueStatusIconDefault;
   const isDone = status === "done";
-  const explicitWaitingAriaLabel = isExplicitWaiting
-    ? (status === "blocked"
-        ? `Blocked · ${explicitWaitingTooltipBase(blockerAttention).toLowerCase()}`
-        : explicitWaitingTooltipBase(blockerAttention))
-    : null;
   const recoveryAriaLabel = isRecoveryNeeded ? blockedAttentionLabel(blockerAttention) : null;
-  const ariaLabel = explicitWaitingAriaLabel
-    ?? recoveryAriaLabel
+  const ariaLabel = recoveryAriaLabel
     ?? (status === "blocked" ? blockedAttentionLabel(blockerAttention) : statusLabel(status));
-  const blockerAttentionState = isExplicitWaiting
-    ? "explicit_waiting"
-    : isCoveredBlocked
-      ? "covered"
-      : isStalledBlocked
-        ? "stalled"
-        : isRecoveryNeeded
-          ? "recovery_needed"
-          : undefined;
+  const blockerAttentionState = isCoveredBlocked
+    ? "covered"
+    : isStalledBlocked
+      ? "stalled"
+      : isRecoveryNeeded
+        ? "recovery_needed"
+        : undefined;
 
   const circle = (
     <span
@@ -147,7 +116,7 @@ export function StatusIcon({ status, blockerAttention, onChange, className, show
       {isDone && (
         <span className="absolute inset-0 m-auto h-2 w-2 rounded-full bg-current" />
       )}
-      {(isCoveredBlocked || isExplicitWaiting) && (
+      {isCoveredBlocked && (
         <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-background bg-current" />
       )}
       {isStalledBlocked && (

@@ -248,34 +248,6 @@ const coveredBlockedMatrix: CoveredBlockedCell[] = [
     expectedVisual: "yellow ring + alert overlay",
     expectedCopy: "Blocked · liveness break at PAP-2642 · productive run stopped without continuation",
   },
-  {
-    label: "Explicit waiting (board confirmation)",
-    status: "in_review",
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2708",
-      nextActionOwner: { type: "user", agentId: null, userId: null },
-      nextActionHint: "needs_human_review",
-    }),
-    expectedVisual: "sky ring + small dot",
-    expectedCopy: "Waiting on board",
-  },
-  {
-    label: "Explicit waiting (specific user)",
-    status: "in_review",
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2710",
-      nextActionOwner: { type: "user", agentId: null, userId: "user-1" },
-      nextActionHint: "needs_human_review",
-    }),
-    expectedVisual: "sky ring + small dot",
-    expectedCopy: "Waiting on user",
-  },
 ];
 
 const coveredBlockedIssue = createIssue({
@@ -310,22 +282,15 @@ type BlockedNoticeStateLabel =
   | "Stalled (single leaf)"
   | "Stalled (multiple leaves)"
   | "Recovery needed (parent perspective)"
-  | "Recovery needed (leaf perspective)"
-  | "Explicit wait (plan confirmation)"
-  | "Explicit wait (user response)"
-  | "Explicit wait (board approval)"
-  | "Explicit wait (chain — leaf elsewhere)";
+  | "Recovery needed (leaf perspective)";
 
 type BlockedNoticeFixture = {
   label: BlockedNoticeStateLabel;
   caption: string;
   issueStatus: string;
-  issueIdentifier?: string;
   blockers: IssueRelationIssueSummary[];
   blockerAttention: IssueBlockerAttention;
   ownerAgentName?: string;
-  interactions?: import("@paperclipai/shared").IssueThreadInteraction[];
-  approvals?: import("@paperclipai/shared").Approval[];
 };
 
 const stalledLeafSingle = summaryBlocker({
@@ -464,134 +429,6 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
     }),
     ownerAgentName: "CodexSparkCoder",
   },
-  {
-    label: "Explicit wait (plan confirmation)",
-    caption: "A pending board confirmation against the latest plan revision — sky banner, owner/resume rows, jump anchor.",
-    issueStatus: "in_review",
-    issueIdentifier: "PAP-2708",
-    blockers: [],
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2708",
-      nextActionOwner: { type: "user", agentId: null, userId: null },
-      nextActionHint: "needs_human_review",
-    }),
-    interactions: [
-      {
-        id: "interaction-plan",
-        companyId: "co-1",
-        issueId: "issue-pap-2708",
-        kind: "request_confirmation",
-        status: "pending",
-        continuationPolicy: "wake_assignee",
-        createdAt: "2026-04-28T22:00:00.000Z",
-        updatedAt: "2026-04-28T22:00:00.000Z",
-        createdByAgentId: "agent-coder",
-        createdByUserId: null,
-        payload: {
-          version: 1,
-          prompt: "Approve plan",
-          target: {
-            type: "issue_document",
-            key: "plan",
-            revisionId: "rev-1",
-            revisionNumber: 2,
-          },
-        },
-      },
-    ],
-  },
-  {
-    label: "Explicit wait (user response)",
-    caption: "Pending ask_user_questions waiting on a specific user — sky banner with owner/resume rows and a Jump to questions anchor.",
-    issueStatus: "in_review",
-    issueIdentifier: "PAP-2710",
-    blockers: [],
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2710",
-      nextActionOwner: { type: "user", agentId: null, userId: "user-1" },
-      nextActionHint: "needs_human_review",
-    }),
-    interactions: [
-      {
-        id: "interaction-questions",
-        companyId: "co-1",
-        issueId: "issue-pap-2710",
-        kind: "ask_user_questions",
-        status: "pending",
-        continuationPolicy: "wake_assignee",
-        createdAt: "2026-04-28T22:00:00.000Z",
-        updatedAt: "2026-04-28T22:00:00.000Z",
-        createdByAgentId: "agent-coder",
-        createdByUserId: null,
-        payload: {
-          version: 1,
-          questions: [
-            { id: "q1", prompt: "Question 1?", selectionMode: "single", options: [] },
-            { id: "q2", prompt: "Question 2?", selectionMode: "single", options: [] },
-          ],
-        },
-      },
-    ],
-  },
-  {
-    label: "Explicit wait (board approval)",
-    caption: "Pending board approval, no thread interaction — sky banner falls back to board-approval headline and Jump to approval anchor.",
-    issueStatus: "in_review",
-    issueIdentifier: "PAP-2711",
-    blockers: [],
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2711",
-      nextActionOwner: { type: "user", agentId: null, userId: null },
-      nextActionHint: "needs_human_review",
-    }),
-    approvals: [
-      {
-        id: "ca6ba09d-b558-4a53-a552-e7ef87e54a1b",
-        companyId: "co-1",
-        type: "request_board_approval",
-        requestedByAgentId: "agent-coder",
-        requestedByUserId: null,
-        status: "pending",
-        payload: {},
-        decisionNote: null,
-        decidedByUserId: null,
-        decidedAt: null,
-        createdAt: new Date("2026-04-28T22:00:00.000Z"),
-        updatedAt: new Date("2026-04-28T22:00:00.000Z"),
-      },
-    ],
-  },
-  {
-    label: "Explicit wait (chain — leaf elsewhere)",
-    caption: "Parent issue whose downstream leaf has the pending wait — sky banner with the 'Waiting at' chip strip.",
-    issueStatus: "blocked",
-    issueIdentifier: "PAP-2712",
-    blockers: [
-      summaryBlocker({
-        id: "issue-wait-chain-leaf",
-        identifier: "PAP-2708",
-        title: "Plan confirmation pending downstream",
-        status: "in_review",
-      }),
-    ],
-    blockerAttention: attention({
-      state: "covered",
-      reason: "explicit_waiting",
-      coveredBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2708",
-      nextActionOwner: { type: "user", agentId: null, userId: null },
-      nextActionHint: "needs_human_review",
-    }),
-  },
 ];
 
 function BlockedNoticeSurface({
@@ -616,13 +453,10 @@ function BlockedNoticeSurface({
         </div>
         <div className={isMobile ? "max-w-[358px] px-3 py-3" : "min-w-[620px] px-4 py-3"}>
           <IssueBlockedNotice
-            issueIdentifier={fixture.issueIdentifier}
             issueStatus={fixture.issueStatus}
             blockers={fixture.blockers}
             blockerAttention={fixture.blockerAttention}
             ownerAgentName={fixture.ownerAgentName}
-            interactions={fixture.interactions}
-            approvals={fixture.approvals}
           />
           <p className="text-[11px] text-muted-foreground">{fixture.caption}</p>
         </div>

@@ -1,7 +1,7 @@
 # Execution Semantics
 
 Status: Current implementation guide
-Date: 2026-04-29
+Date: 2026-04-28
 Audience: Product and engineering
 
 This document explains how Paperclip interprets issue assignment, issue status, execution runs, wakeups, parent/sub-issue structure, and blocker relationships.
@@ -174,98 +174,6 @@ Run progress and issue liveness are separate questions. A finished heartbeat can
 
 Pending issue-thread interactions and linked pending approvals are status-independent waiting primitives: they can keep a `todo` or `in_progress` issue healthy if they clearly name the responder and continuation policy, and the wait is either fresh or tied to a resolvable human owner. Stale agent-authored or ownerless waits are not durable liveness coverage; recovery should treat them as stalled or recovery-needed instead of suppressing watchdog surfaces indefinitely. Agents should still move the source issue to `in_review` when they create a plan confirmation, question, or other board/user decision card, because `in_review` is the visible posture that tells operators execution is intentionally paused rather than abandoned.
 
-### Canonical execution dispositions
-
-Issue status is the user-facing posture. It is not the whole execution state machine. For agent-owned non-terminal issues, Paperclip must derive exactly one canonical execution disposition from the state vector after each write, heartbeat, recovery scan, and read-model classification.
-
-The canonical dispositions are:
-
-| Disposition | Meaning | Healthy resting state? | Required handling |
-|---|---|---:|---|
-| `terminal` | The issue is `done` or `cancelled`. | yes | No execution or recovery expected. |
-| `resting` | The issue is intentionally not executable yet, normally `backlog`. | yes | Do not wake or recover until status/owner changes. |
-| `dispatchable` | The issue can be delivered to an invokable agent. | yes, briefly | Ensure a wake path exists or can be enqueued. |
-| `live` | An active run, queued wake, scheduled retry, or deferred execution owns the next move. | yes | Preserve the live path and avoid duplicate wakes. |
-| `waiting` | A typed participant, pending interaction, linked approval, human owner, active pause hold, healthy blocker chain, watchdog/recovery issue, or productivity review owns the next move. | yes | Surface the wait owner/action; do not auto-run the source while the wait is valid. |
-| `recoverable_by_control_plane` | The control plane can safely repair lost execution continuity without choosing product intent. | transitional | Queue one bounded dispatch/continuation/repair wake, or create/reuse the approved recovery artifact. |
-| `agent_continuable` | The assigned agent can be asked, within bounded continuation rules, to convert useful output or a runnable next action into durable issue state. | transitional | Queue a deduped continuation if attempts remain and no hold/gate suppresses it. |
-| `human_escalation_required` | A board user, manager, approver, external owner, or explicit recovery owner must decide before work can lawfully move. | transitional or waiting when represented by an owned issue/interaction | Create or reuse one visible review/recovery/unblock artifact and block or move the source only when that wait is real. |
-| `invalid` | The proposed or stored state has no lawful next action. | no | Reject at the API boundary, normalize before commit, or convert to visible recovery/escalation work. |
-
-`terminal`, `resting`, `dispatchable`, `live`, and `waiting` are stable classifications. `recoverable_by_control_plane`, `agent_continuable`, `human_escalation_required`, and `invalid` are action classifications: they must lead to a queued wake, explicit artifact, rejected write, normalized state, or visible blocker/recovery comment rather than quietly remaining as stale data.
-
-The classifier input is a state vector, not a single field. The vector includes:
-
-- work posture: issue status
-- owner: agent, human user, unassigned, or invalid dual owner
-- agent invokability: active, idle, running, error, paused, terminated, pending approval, or budget-blocked
-- execution path: active run, queued wake, scheduled retry, deferred issue execution, checkout lock, execution lock
-- explicit wait path: execution-policy participant, issue-thread interaction, linked approval, human owner, active pause hold
-- dependency path: blockers and the first unresolved leaf disposition
-- run evidence: latest issue-linked run status, run liveness classification, continuation attempt count, and next-action extraction
-- recovery path: open explicit recovery issue, watchdog issue, productivity review hold, previous automatic recovery attempt
-- governance gates: board approval requirements, permissions, company boundary, budget hard stop, subtree pause/cancel hold
-
-### State-vector matrix
-
-Use this matrix as the product contract for table-driven classifier tests. Rows are ordered by precedence: earlier rows win when multiple signals are present.
-
-| Row | Status posture | Owner vector | Action, wait, dependency, or gate vector | Canonical disposition | Handling contract |
-|---|---|---|---|---|---|
-| 1 | `done` or `cancelled` | any valid owner state | terminal status is set | `terminal` | Do not dispatch or recover. |
-| 2 | any | both `assigneeAgentId` and `assigneeUserId` set | dual owner violates the single-assignee invariant | `invalid` | Reject or normalize before persistence. |
-| 3 | `backlog` | unassigned or assigned | no active execution expectation | `resting` | Leave idle until promoted. |
-| 4 | `todo` | unassigned | no owner | `resting` | Do not wake; surface as unassigned ready work if appropriate. |
-| 5 | `todo` | agent assigned, invokable, not budget-blocked | queued wake, scheduled retry, or deferred issue execution exists | `live` | Preserve the existing path; do not enqueue duplicates. |
-| 6 | `todo` | agent assigned, invokable, not budget-blocked | no run yet, no queued wake, no pause hold | `dispatchable` | Assignment dispatch may enqueue one backstop wake. |
-| 7 | `todo` | agent assigned | pending interaction, linked approval, active pause hold, or open review/recovery/productivity issue owns next action | `waiting` | `todo` can wait explicitly, but the wait owner/action must be first-class. |
-| 8 | `todo` | agent assigned, invokable, not budget-blocked | latest failed/timed-out/cancelled issue run and no live path | `recoverable_by_control_plane` | Queue one dispatch recovery wake, then escalate if exhausted. |
-| 9 | `todo` or `in_progress` | agent assigned but paused, terminated, pending approval, uninvokable, or budget hard-stopped | no valid wait/recovery artifact already owns the next action | `human_escalation_required` | Board/manager must resume, reconfigure, raise budget, reassign, or cancel. |
-| 10 | `todo`, `in_progress`, `in_review`, or `blocked` | agent assigned | active subtree pause/cancel hold covers the issue | `waiting` with `pause_hold` | Suppress dispatch, recovery, scheduled retry promotion, and bounded continuation until released. |
-| 11 | `in_progress` | agent assigned | active run exists | `live` with `active_run` | Active-run watchdog may review silence; liveness recovery must not replace the live process. |
-| 12 | `in_progress` | agent assigned | queued continuation, scheduled retry, or deferred issue execution exists | `live` | Preserve the queued path and dedupe equivalent wakes. |
-| 13 | `in_progress` | agent assigned | pending interaction, linked approval, execution participant, active pause hold, or open review/recovery/productivity issue owns next action | `waiting` | Show owner/action; do not call a finished run the wait. |
-| 14 | `in_progress` | agent assigned, invokable, not budget-blocked | live path disappeared after failed/timed-out/cancelled run and recovery attempt remains | `recoverable_by_control_plane` | Queue one continuation recovery wake. |
-| 15 | `in_progress` | agent assigned, invokable, not budget-blocked | latest successful run made useful progress, issue is non-terminal, runnable next action exists, attempts remain, and no wait/live path exists | `agent_continuable` | Queue bounded `run_liveness_continuation` with idempotency key. |
-| 16 | `in_progress` | agent assigned | latest successful run is non-terminal but next action is ambiguous, manager-review, approval-required without interaction, or continuation attempts are exhausted | `human_escalation_required` | Create/reuse explicit recovery or review work; do not silently pass. |
-| 17 | `in_review` | human user assigned | user owns the review decision | `waiting` with `human_owner` | Board/user action is the valid wait path. |
-| 18 | `in_review` | agent assigned | typed execution-policy participant, pending interaction, linked approval, active/queued issue wake, or explicit recovery issue exists | `waiting` | `in_review` is healthy only because the typed path exists, not because of status alone. |
-| 19 | `in_review` | agent assigned | no participant, interaction, approval, user owner, active run, queued wake, or recovery issue | `invalid` | Reject new writes; for stored rows surface `in_review_without_action_path` and convert to recovery/escalation. |
-| 20 | `blocked` | any valid owner | first-class blockers exist and every non-terminal unresolved leaf is `live`, `waiting`, `dispatchable`, `recoverable_by_control_plane`, `agent_continuable`, or `human_escalation_required` with an owned artifact/action | `waiting` with `blocker_chain` | Source remains idle; parent surfaces the first unresolved leaf and owner/action. |
-| 21 | `blocked` | any valid owner | blocker leaf is `invalid`, cancelled as a blocker, unassigned without an action path, uninvokable without escalation, or recursively stalled recovery work | `invalid` | Surface the first bad leaf; create/reuse one recovery/unblock artifact when safe. |
-| 22 | `blocked` | any valid owner | structured external owner/action exists and is still current | `waiting` with external owner/action | Source remains idle; UI must show the external owner and requested action. |
-| 23 | `blocked` | any valid owner | no `blockedByIssueIds`, no live wait primitive, and no structured external owner/action | `invalid` | New writes should be rejected; stored rows need explicit unblock/recovery work. |
-| 24 | any non-terminal | user assigned | human owns the next move | `waiting` with `human_owner` | Heartbeat liveness recovery does not apply. |
-| 25 | any non-terminal | agent assigned | open watchdog or productivity review owns the decision | `waiting` with explicit review artifact | The source is not failed by definition; manager/recovery owner decides. |
-| 26 | any non-terminal recovery issue | agent assigned | origin is recovery work and the recovery issue itself failed or lost execution | `human_escalation_required` | Update/block the recovery issue in place; do not create recovery-of-recovery descendants. |
-
-Budget hard stops never imply `done`, and pause holds never imply `terminal`. They are gates on invocation and recovery, not evidence that product work completed.
-
-### Fixture matrix for classifier tests
-
-These fixtures come from recent product incidents and plans. Implementations should encode them as synthetic table rows rather than depending on production data.
-
-| Fixture | Source | State vector to synthesize | Expected disposition | Assertion |
-|---|---|---|---|---|
-| `invalid-review-leaf-pi-autoresearch` | [PAP-2787](/PAP/issues/PAP-2787) / [PAP-2667](/PAP/issues/PAP-2667) | `in_review`, agent-owned, no `executionState.currentParticipant`, no pending interaction/approval, no user owner, no active run, no queued wake, no recovery issue; parent blockers point at this leaf | `invalid` with reason `in_review_without_action_path` | Blocked parents must surface this leaf, never `covered`, `active_child`, or `active_dependency`. |
-| `invalid-review-leaf-object-detection` | [PAP-2335](/PAP/issues/PAP-2335) / [PAP-2279](/PAP/issues/PAP-2279) | UX review deliverable appears complete in comments, but issue remains agent-owned `in_review` with no typed wait path | `invalid` until converted to explicit recovery/escalation | Prose handoff does not count as a durable wait or automatic completion. |
-| `healthy-review-participant` | Regression companion for [PAP-2787](/PAP/issues/PAP-2787) | `in_review`, agent-owned or policy-owned, `executionState.currentParticipant` names a valid participant who can decide | `waiting` with `participant` | Typed participant is sufficient wait coverage. |
-| `healthy-review-confirmation` | [PAP-2708](/PAP/issues/PAP-2708) | productive successful run requested plan confirmation; source is `in_progress` or `in_review`; pending `request_confirmation` targets latest plan revision and names board/user continuation | `waiting` with `interaction` | Must not show `productive_run_stopped`; accepting/rejecting the confirmation owns continuation. |
-| `healthy-linked-approval` | Explicit-wait companion for [PAP-2708](/PAP/issues/PAP-2708) | non-terminal agent-owned issue has a linked pending approval that names the responder/action and remains fresh or tied to a resolvable human owner | `waiting` with `approval` | Pending approvals are durable wait primitives across `todo`, `in_progress`, `in_review`, and `blocked`. |
-| `productive-terminal-run-runnable-next-action` | [PAP-2674](/PAP/issues/PAP-2674) / [PAP-2642](/PAP/issues/PAP-2642) | `in_progress`, agent-owned, latest issue-linked run `succeeded`, liveness `advanced`, non-terminal issue, no live/wait path, next action is `runnable`, continuation attempts remain | `agent_continuable` | Finished run progress is not liveness; queue one bounded continuation. |
-| `productive-terminal-run-no-next-action` | [PAP-2674](/PAP/issues/PAP-2674) | same as above, but next action is `unknown`, `manager_review`, or attempts are exhausted | `human_escalation_required` | Create/reuse explicit recovery/review work; do not keep spinning. |
-| `true-failed-continuation-recovery` | [PAP-2674](/PAP/issues/PAP-2674) | `in_progress`, agent-owned, latest run `failed`, `timed_out`, or `cancelled`, no live/wait path, recovery attempt remains | `recoverable_by_control_plane` with `continuation` | Queue one automatic recovery wake and preserve owner. |
-| `explicit-productivity-review-hold` | [PAP-2602](/PAP/issues/PAP-2602) / [PAP-2536](/PAP/issues/PAP-2536) | source issue has high churn/no-comment/long-active evidence and one open `issue_productivity_review` child | `waiting` with explicit review artifact | Source is yellow manager review, not failed; no duplicate review children. |
-| `productivity-threshold-without-review` | [PAP-2602](/PAP/issues/PAP-2602) | no-comment streak, high churn, or long active threshold exceeded; no open review exists yet | `human_escalation_required` | Reconciler creates/reuses one manager-facing review; after that artifact exists, the source reclassifies as `waiting`. |
-| `healthy-long-active-run` | [PAP-2602](/PAP/issues/PAP-2602) | `in_progress`, agent-owned, active run exists, duration exceeds long-active threshold, no silence-critical decision yet | `live` plus possible watchdog/productivity review side effect | Do not kill or replace the active run just because it is long. |
-| `recovery-of-recovery-failure` | [PAP-2486](/PAP/issues/PAP-2486) / [PAP-2479](/PAP/issues/PAP-2479) | issue origin is `stranded_issue_recovery`; its own run fails/losses execution; no live path remains | `human_escalation_required` with owner `recovery_owner` or manager | Update/block the same recovery issue in place; create no nested recovery issue. |
-| `normal-source-recovery-dedupe` | [PAP-2486](/PAP/issues/PAP-2486) | non-recovery source work exhausted automatic recovery and has no live/wait path | `human_escalation_required` represented by one open stranded recovery issue | Dedupe by source/fingerprint; concurrent scans cannot create two open recovery artifacts. |
-| `blocked-chain-healthy-leaf` | [PAP-2335](/PAP/issues/PAP-2335) companion | parent `blocked`, unresolved leaf has active run, queued wake, pending interaction, human owner, or explicit recovery issue | `waiting` with `blocker_chain` | Parent is covered and should not wake until blockers resolve. |
-| `blocked-chain-cancelled-leaf` | Required by [PAP-2790](/PAP/issues/PAP-2790) | parent `blocked`, unresolved blocker leaf is `cancelled` and still listed as blocker | `invalid` | Cancelled blockers do not resolve dependency chains automatically; remove/replace blocker or escalate. |
-| `budget-hard-stop` | V1 budget rule | agent-owned `todo` or `in_progress`, agent/company/project hard budget stop prevents invocation, no existing wait artifact | `human_escalation_required` with owner `board` | Raise budget, resume, reassign, or cancel; never mark complete. |
-| `pause-held-subtree` | Pause-hold contract | non-terminal issue covered by active subtree pause/cancel hold | `waiting` with `pause_hold` | Suppress recovery, dispatch, scheduled retry promotion, and bounded continuation until hold release. |
-| `dual-assignee-write` | Single-assignee invariant | both agent and user assignee set on proposed or stored issue | `invalid` | API rejects with a precise owner invariant error. |
-
 ### Agent-assigned `todo`
 
 This is dispatch state: ready to start, not yet actively claimed.
@@ -297,9 +205,14 @@ An agent-owned `in_progress` issue is stalled when it has no active run, no queu
 
 For new handoffs, do not rely on `in_progress` plus a pending interaction as the normal user-facing state. It is accepted as a liveness backstop for compatibility and crash recovery, but the preferred contract is to set the issue to `in_review` before the heartbeat exits.
 
-For terminal successful runs, Paperclip evaluates the canonical issue execution disposition instead of treating success as liveness. A succeeded run with useful output can still leave the issue as `agent_continuable`, `human_escalation_required`, or `invalid` when no separate live or waiting path exists.
+For terminal successful runs, Paperclip evaluates the post-run issue disposition instead of treating success as liveness. The disposition is:
 
-Only `terminal`, `resting`, `dispatchable`, `live`, and `waiting` are healthy resting states. `recoverable_by_control_plane`, `agent_continuable`, `human_escalation_required`, and `invalid` must be turned into a bounded continuation, automatic recovery wake, explicit recovery/review/unblock work, rejected write, or visible blocked state.
+- `terminal`: the issue is `done` or `cancelled`
+- `explicitly_live`: an active run, queued wake, scheduled retry, or deferred issue-execution wake owns the next step
+- `explicitly_waiting`: a blocker, active pause hold, `in_review`, pending interaction, linked approval, execution-policy state, or explicit recovery issue owns the next step
+- `invalid`: the issue is non-terminal and no live, waiting, or recovery path exists
+
+Only `terminal`, `explicitly_live`, and `explicitly_waiting` are healthy resting states. `invalid` must become a bounded continuation, explicit recovery/review work, or a visible blocked state.
 
 ### `in_review`
 
@@ -366,10 +279,9 @@ Example:
 Recovery rule:
 
 - if the latest run failed/timed out/cancelled and no live execution path remains, Paperclip queues one automatic continuation wake
-- if the latest successful run is terminal and the post-run issue disposition is `recoverable_by_control_plane`, Paperclip performs the named bounded repair without choosing product intent
-- if the latest successful run is terminal and the post-run issue disposition is `agent_continuable`, Paperclip queues a `run_liveness_continuation` wake with a stable idempotency key and continuation attempt count
-- if the latest successful run is terminal and the post-run issue disposition is `human_escalation_required` or `invalid`, Paperclip creates/reuses explicit recovery or review work, rejects/normalizes the invalid transition where possible, or moves the issue to `blocked` with a visible comment
-- if the latest successful run is terminal and the post-run issue disposition is `terminal`, `resting`, `dispatchable`, `live`, or `waiting`, Paperclip preserves that disposition and does not treat run success itself as a live path
+- if the latest successful run is terminal and the post-run issue disposition is invalid, Paperclip examines the run liveness state, next action, and actionability before continuing
+- if bounded continuation is safe, Paperclip queues a `run_liveness_continuation` wake with a stable idempotency key and continuation attempt count
+- if bounded continuation is exhausted or unsafe, Paperclip creates/reuses explicit recovery work or moves the issue to `blocked` with a visible comment
 
 This is an active-work continuity recovery.
 

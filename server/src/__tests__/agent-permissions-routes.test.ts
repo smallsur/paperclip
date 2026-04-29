@@ -66,10 +66,6 @@ const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
 }));
 
-const mockRecoveryService = vi.hoisted(() => ({
-  recordWatchdogDecision: vi.fn(),
-}));
-
 const mockIssueApprovalService = vi.hoisted(() => ({
   linkManyForApproval: vi.fn(),
 }));
@@ -144,10 +140,6 @@ function registerModuleMocks() {
 
   vi.doMock("../services/heartbeat.js", () => ({
     heartbeatService: () => mockHeartbeatService,
-  }));
-
-  vi.doMock("../services/recovery/service.js", () => ({
-    recoveryService: () => mockRecoveryService,
   }));
 
   vi.doMock("../services/issue-approvals.js", () => ({
@@ -279,7 +271,6 @@ describe.sequential("agent permission routes", () => {
     vi.doUnmock("../services/budgets.js");
     vi.doUnmock("../services/company-skills.js");
     vi.doUnmock("../services/heartbeat.js");
-    vi.doUnmock("../services/recovery/service.js");
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../services/instance-settings.js");
     vi.doUnmock("../services/issue-approvals.js");
@@ -315,7 +306,6 @@ describe.sequential("agent permission routes", () => {
     mockHeartbeatService.resetRuntimeSession.mockReset();
     mockHeartbeatService.getRun.mockReset();
     mockHeartbeatService.cancelRun.mockReset();
-    mockRecoveryService.recordWatchdogDecision.mockReset();
     mockIssueApprovalService.linkManyForApproval.mockReset();
     mockIssueService.list.mockReset();
     mockSecretService.normalizeAdapterConfigForPersistence.mockReset();
@@ -384,13 +374,6 @@ describe.sequential("agent permission routes", () => {
       censorUsernameInLogs: false,
     });
     mockLogActivity.mockResolvedValue(undefined);
-    mockRecoveryService.recordWatchdogDecision.mockResolvedValue({
-      id: "watchdog-decision-1",
-      runId: "run-1",
-      evaluationIssueId: "evaluation-1",
-      decision: "cancel_run",
-      reason: "The stale run is stuck",
-    });
   });
 
   it("redacts agent detail for authenticated company members without agent admin permission", async () => {
@@ -1209,116 +1192,6 @@ describe.sequential("agent permission routes", () => {
     const res = await requestApp(app, (baseUrl) => request(baseUrl).post("/api/heartbeat-runs/run-1/cancel").send({}));
 
     expect(res.status).toBe(403);
-    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
-  });
-
-  it("keeps generic heartbeat cancellation board-only", async () => {
-    const app = await createApp({
-      type: "agent",
-      agentId,
-      companyId,
-      source: "agent_key",
-      runId: "actor-run-1",
-    });
-
-    const res = await requestApp(app, (baseUrl) => request(baseUrl)
-      .post("/api/heartbeat-runs/run-1/cancel")
-      .send({}));
-
-    expect(res.status).toBe(403);
-    expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
-  });
-
-  it("lets an agent use the watchdog recovery cancel route without board access", async () => {
-    mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
-      companyId,
-      agentId,
-      status: "running",
-    });
-    mockHeartbeatService.cancelRun.mockResolvedValue({
-      id: "run-1",
-      companyId,
-      agentId,
-      status: "cancelled",
-    });
-
-    const app = await createApp({
-      type: "agent",
-      agentId,
-      companyId,
-      source: "agent_key",
-      runId: "actor-run-1",
-    });
-
-    const res = await requestApp(app, (baseUrl) => request(baseUrl)
-      .post("/api/heartbeat-runs/run-1/watchdog-decisions")
-      .send({
-        decision: "cancel_run",
-        evaluationIssueId: "evaluation-1",
-        reason: "The stale run is stuck",
-      }));
-
-    expect(res.status).toBe(200);
-    expect(mockRecoveryService.recordWatchdogDecision).toHaveBeenCalledWith({
-      runId: "run-1",
-      actor: expect.objectContaining({
-        type: "agent",
-        agentId,
-        runId: "actor-run-1",
-      }),
-      decision: "cancel_run",
-      evaluationIssueId: "evaluation-1",
-      reason: "The stale run is stuck",
-      snoozedUntil: null,
-      createdByRunId: "actor-run-1",
-    });
-    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1", "The stale run is stuck");
-    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      actorType: "agent",
-      actorId: agentId,
-      agentId,
-      runId: "run-1",
-      action: "heartbeat.watchdog_cancelled",
-      entityType: "heartbeat_run",
-      entityId: "run-1",
-      details: expect.objectContaining({
-        decision: "cancel_run",
-        evaluationIssueId: "evaluation-1",
-        reason: "The stale run is stuck",
-        createdByRunId: "actor-run-1",
-        targetRunId: "run-1",
-        previousStatus: "running",
-        resultStatus: "cancelled",
-      }),
-    }));
-  });
-
-  it("requires an evaluation issue on watchdog recovery cancellation", async () => {
-    mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
-      companyId,
-      agentId,
-      status: "running",
-    });
-
-    const app = await createApp({
-      type: "agent",
-      agentId,
-      companyId,
-      source: "agent_key",
-      runId: "actor-run-1",
-    });
-
-    const res = await requestApp(app, (baseUrl) => request(baseUrl)
-      .post("/api/heartbeat-runs/run-1/watchdog-decisions")
-      .send({
-        decision: "cancel_run",
-        reason: "The stale run is stuck",
-      }));
-
-    expect(res.status).toBe(400);
-    expect(mockRecoveryService.recordWatchdogDecision).not.toHaveBeenCalled();
     expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
   });
 });

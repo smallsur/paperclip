@@ -85,9 +85,6 @@ import { recoveryService } from "../services/recovery/service.js";
 
 const RUN_LOG_DEFAULT_LIMIT_BYTES = 256_000;
 const RUN_LOG_MAX_LIMIT_BYTES = 1024 * 1024;
-const LIVE_RUNS_DEFAULT_LIMIT = 50;
-const WATCHDOG_DECISIONS = ["snooze", "continue", "dismissed_false_positive", "cancel_run"] as const;
-type WatchdogDecision = (typeof WATCHDOG_DECISIONS)[number];
 
 function readRunLogLimitBytes(value: unknown) {
   const parsed = Number(value ?? RUN_LOG_DEFAULT_LIMIT_BYTES);
@@ -2575,7 +2572,7 @@ export function agentRoutes(
     assertCompanyAccess(req, companyId);
 
     const minCount = readLiveRunsQueryInt(req.query.minCount, 50);
-    const limit = readLiveRunsQueryInt(req.query.limit, LIVE_RUNS_DEFAULT_LIMIT, LIVE_RUNS_DEFAULT_LIMIT);
+    const limit = readLiveRunsQueryInt(req.query.limit, 50);
 
     const columns = {
       id: heartbeatRuns.id,
@@ -2698,20 +2695,12 @@ export function agentRoutes(
     }
     assertCompanyAccess(req, existing.companyId);
     const decision = typeof req.body?.decision === "string" ? req.body.decision : "";
-    if (!WATCHDOG_DECISIONS.includes(decision as WatchdogDecision)) {
+    if (!["snooze", "continue", "dismissed_false_positive"].includes(decision)) {
       res.status(400).json({ error: "Unsupported watchdog decision" });
       return;
     }
     const evaluationIssueId = typeof req.body?.evaluationIssueId === "string" ? req.body.evaluationIssueId : null;
     const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 4000) : null;
-    if (decision === "cancel_run" && !reason?.trim()) {
-      res.status(400).json({ error: "Cancellation reason is required" });
-      return;
-    }
-    if (decision === "cancel_run" && !evaluationIssueId) {
-      res.status(400).json({ error: "evaluationIssueId is required for cancellation" });
-      return;
-    }
     const snoozedUntil = decision === "snooze"
       ? new Date(String(req.body?.snoozedUntil ?? ""))
       : null;
@@ -2723,47 +2712,14 @@ export function agentRoutes(
     const row = await recovery.recordWatchdogDecision({
       runId: existing.id,
       actor: req.actor,
-      decision: decision as WatchdogDecision,
+      decision: decision as "snooze" | "continue" | "dismissed_false_positive",
       evaluationIssueId,
       reason,
       snoozedUntil,
       createdByRunId: req.actor.runId ?? null,
     });
 
-    if (decision !== "cancel_run") {
-      res.json(row);
-      return;
-    }
-
-    const cancelledRun = await heartbeat.cancelRun(existing.id, reason?.trim());
-    if (cancelledRun) {
-      await logActivity(db, {
-        companyId: cancelledRun.companyId,
-        actorType: req.actor.type === "agent" ? "agent" : "user",
-        actorId: req.actor.type === "agent"
-          ? req.actor.agentId ?? "agent"
-          : req.actor.type === "board"
-            ? req.actor.userId ?? "board"
-            : "unknown",
-        agentId: req.actor.type === "agent" ? req.actor.agentId ?? null : null,
-        runId: cancelledRun.id,
-        action: "heartbeat.watchdog_cancelled",
-        entityType: "heartbeat_run",
-        entityId: cancelledRun.id,
-        details: {
-          source: "routes.heartbeat_runs.watchdog_decisions",
-          decision,
-          evaluationIssueId,
-          reason: reason?.trim() ?? null,
-          createdByRunId: req.actor.runId ?? null,
-          targetRunId: cancelledRun.id,
-          previousStatus: existing.status,
-          resultStatus: cancelledRun.status,
-        },
-      });
-    }
-
-    res.json({ decision: row, run: cancelledRun });
+    res.json(row);
   });
 
   router.get("/heartbeat-runs/:runId/events", async (req, res) => {

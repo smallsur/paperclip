@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { classifyIssueGraphLiveness as classifyIssueGraphLivenessCompat } from "../services/issue-liveness.ts";
-import { classifyIssueExecutionDisposition } from "../services/issue-execution-disposition.ts";
 import { decideRunLivenessContinuation as decideRunLivenessContinuationCompat } from "../services/run-continuations.ts";
 import {
   RECOVERY_KEY_PREFIXES,
@@ -151,25 +150,5 @@ describe("recovery classifier boundary", () => {
     expect(isStrandedIssueRecoveryOriginKind("harness_liveness_escalation")).toBe(false);
     expect(isStrandedIssueRecoveryOriginKind("manual")).toBe(false);
     expect(isStrandedIssueRecoveryOriginKind(null)).toBe(false);
-  });
-
-  it("aligns invalid review handoff parity with the canonical disposition classifier", () => {
-    const disposition = classifyIssueExecutionDisposition({
-      issue: {
-        id: issueId,
-        status: "in_review",
-        assigneeAgentId: agentId,
-        assigneeUserId: null,
-      },
-      agent: {
-        id: agentId,
-        status: "idle",
-      },
-    });
-
-    expect(disposition).toMatchObject({
-      kind: "invalid",
-      reason: "in_review_without_action_path",
-    });
   });
 });

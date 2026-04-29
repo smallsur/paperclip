@@ -575,9 +575,6 @@ export function IssueRunLedgerContent({
                 {" "}for recovery context.
               </>
             ) : null}
-            {latestSilentRun.outputSilence.level === "critical" ? (
-              <> The assigned recovery owner can cancel this bound run if the evidence shows it is stuck.</>
-            ) : null}
           </p>
           {onWatchdogDecision && canRecordWatchdogDecisions ? (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -623,22 +620,6 @@ export function IssueRunLedgerContent({
               >
                 Mark false positive
               </button>
-              {latestSilentRun.outputSilence.level === "critical" ? (
-                <button
-                  type="button"
-                  className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-900 hover:bg-red-500/15 dark:text-red-200"
-                  onClick={() =>
-                    onWatchdogDecision({
-                      runId: latestSilentRun.runId,
-                      decision: "cancel_run",
-                      evaluationIssueId: latestSilentRun.outputSilence?.evaluationIssueId ?? null,
-                      reason: "Cancelled from stale-run recovery banner",
-                    })}
-                  disabled={pendingWatchdogDecision != null}
-                >
-                  Cancel run
-                </button>
-              ) : null}
             </div>
           ) : null}
           {watchdogDecisionError ? (

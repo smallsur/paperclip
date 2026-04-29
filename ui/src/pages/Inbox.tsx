@@ -2156,9 +2156,6 @@ export function Inbox() {
                       issue={issue}
                       issueLinkState={issueLinkState}
                       selected={selected}
-                      agentNameMap={agentById}
-                      userLabelMap={companyUserLabelMap}
-                      currentUserId={currentUserId}
                       className={
                         isArchiving
                           ? "pointer-events-none -translate-x-4 scale-[0.98] opacity-0 transition-all duration-200 ease-out"

@@ -7,7 +7,6 @@ import {
   rememberIssueDetailLocationState,
   withIssueDetailHeaderSeed,
 } from "../lib/issueDetailBreadcrumb";
-import { formatAssigneeUserLabel } from "../lib/assignees";
 import { cn } from "../lib/utils";
 import { StatusIcon } from "./StatusIcon";
 import { productivityReviewTriggerLabel } from "./ProductivityReviewBadge";
@@ -35,37 +34,6 @@ interface IssueRowProps {
   onArchive?: () => void;
   archiveDisabled?: boolean;
   className?: string;
-  agentNameMap?: ReadonlyMap<string, string> | null;
-  userLabelMap?: ReadonlyMap<string, string> | null;
-  currentUserId?: string | null;
-}
-
-function truncateOwnerLabel(label: string, max = 18): string {
-  if (label.length <= max) return label;
-  return `${label.slice(0, Math.max(0, max - 1))}…`;
-}
-
-function resolveWaitingOwnerLabel(
-  issue: Issue,
-  agentNameMap: IssueRowProps["agentNameMap"],
-  userLabelMap: IssueRowProps["userLabelMap"],
-  currentUserId: string | null | undefined,
-): string | null {
-  const owner = issue.blockerAttention?.nextActionOwner ?? null;
-  if (!owner) return null;
-  if (owner.type === "user") {
-    if (!owner.userId) return "board";
-    const resolved = formatAssigneeUserLabel(owner.userId, currentUserId ?? null, userLabelMap ?? undefined);
-    return resolved ? truncateOwnerLabel(resolved) : null;
-  }
-  if (owner.type === "agent") {
-    if (owner.agentId && agentNameMap) {
-      const name = agentNameMap.get(owner.agentId);
-      if (name) return truncateOwnerLabel(name);
-    }
-    return null;
-  }
-  return null;
 }
 
 export function IssueRow({
@@ -89,9 +57,6 @@ export function IssueRow({
   onArchive,
   archiveDisabled,
   className,
-  agentNameMap,
-  userLabelMap,
-  currentUserId,
 }: IssueRowProps) {
   const issuePathId = issue.identifier ?? issue.id;
   const identifier = issue.identifier ?? issue.id.slice(0, 8);
@@ -107,29 +72,6 @@ export function IssueRow({
   const recoveryLeafLabel = recoveryLeafIdentifier && recoveryLeafIdentifier !== identifier
     ? `liveness break at ${recoveryLeafIdentifier}`
     : null;
-  const isExplicitWaiting =
-    issue.blockerAttention?.state === "covered"
-    && issue.blockerAttention?.reason === "explicit_waiting";
-  const waitingOwnerLabel = isExplicitWaiting
-    ? resolveWaitingOwnerLabel(issue, agentNameMap, userLabelMap, currentUserId)
-    : null;
-  const waitingPillTitle = waitingOwnerLabel ? `Waiting · ${waitingOwnerLabel}` : "Waiting";
-  const desktopWaitingPill = isExplicitWaiting ? (
-    <span
-      className="inline-flex shrink-0 items-center rounded border border-sky-200/80 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200"
-      title={waitingPillTitle}
-    >
-      {waitingPillTitle}
-    </span>
-  ) : null;
-  const mobileWaitingPill = isExplicitWaiting ? (
-    <span
-      className="inline-flex shrink-0 items-center rounded border border-sky-200/80 bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200"
-      title={waitingPillTitle}
-    >
-      Waiting
-    </span>
-  ) : null;
   const productivityReviewIndicator = productivityReview ? (
     <span
       className={cn(
@@ -213,18 +155,12 @@ export function IssueRow({
           ) : null}
         </span>
       </span>
-      {(desktopTrailing || trailingMeta || desktopWaitingPill) ? (
+      {(desktopTrailing || trailingMeta) ? (
         <span className="ml-auto hidden shrink-0 items-center gap-2 sm:order-3 sm:flex sm:gap-3">
-          {desktopWaitingPill}
           {desktopTrailing}
           {trailingMeta ? (
             <span className="text-xs text-muted-foreground">{trailingMeta}</span>
           ) : null}
-        </span>
-      ) : null}
-      {mobileWaitingPill ? (
-        <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 sm:hidden">
-          {mobileWaitingPill}
         </span>
       ) : null}
       {showUnreadSlot ? (

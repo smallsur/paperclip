@@ -6,7 +6,6 @@ import {
   MIN_ISSUE_GRAPH_LIVENESS_AUTO_RECOVERY_LOOKBACK_HOURS,
   type IssueGraphLivenessAutoRecoveryPreview,
   type IssueGraphLivenessAutoRecoveryPreviewItem,
-  type IssueStatus,
   type RunLivenessState,
 } from "@paperclipai/shared";
 import {
@@ -24,7 +23,7 @@ import {
 } from "@paperclipai/db";
 import { parseObject, asBoolean, asNumber } from "../../adapters/utils.js";
 import { runningProcesses } from "../../adapters/index.js";
-import { badRequest, conflict, forbidden, notFound } from "../../errors.js";
+import { forbidden, notFound } from "../../errors.js";
 import { logger } from "../../middleware/logger.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
 import { redactSensitiveText } from "../../redaction.js";
@@ -57,14 +56,8 @@ import {
   findExistingRunLivenessContinuationWake,
   readContinuationAttempt,
 } from "./run-liveness-continuations.js";
-import {
-  classifyIssueExecutionDisposition,
-  type IssueExecutionRunLivenessState,
-  type IssueExecutionRunStatus,
-} from "../issue-execution-disposition.js";
 
 const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"] as const;
-const CANCELLABLE_ACTIVE_RUN_RECOVERY_STATUSES = ["queued", "running", "scheduled_retry"] as const;
 const UNSUCCESSFUL_HEARTBEAT_RUN_TERMINAL_STATUSES = ["failed", "cancelled", "timed_out"] as const;
 export const ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS = 60 * 60 * 1000;
 export const ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS = 4 * 60 * 60 * 1000;
@@ -112,8 +105,6 @@ type WatchdogDecisionActor =
   | { type: "board"; userId?: string | null; runId?: string | null }
   | { type: "agent"; agentId?: string | null; runId?: string | null }
   | { type: "none" };
-
-type WatchdogDecision = "snooze" | "continue" | "dismissed_false_positive" | "cancel_run";
 
 export type RunOutputSilenceSummary = {
   lastOutputAt: Date | null;
@@ -488,47 +479,14 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     issue: typeof issues.$inferSelect,
     latestRun: LatestIssueRun,
   ): Promise<PostRunIssueDisposition> {
-    const [activePath, explicitWait, agent, budgetBlocked] = await Promise.all([
-      hasActiveExecutionPath(issue.companyId, issue.id),
-      hasExplicitWaitingPath(issue),
-      issue.assigneeAgentId ? getAgent(issue.assigneeAgentId) : Promise.resolve(null),
-      issue.assigneeAgentId ? isInvocationBudgetBlocked(issue, issue.assigneeAgentId) : Promise.resolve(false),
-    ]);
-    const activeRunFromLatest = Boolean(
-      latestRun &&
-      EXECUTION_PATH_HEARTBEAT_RUN_STATUSES.includes(
-        latestRun.status as (typeof EXECUTION_PATH_HEARTBEAT_RUN_STATUSES)[number],
-      ),
-    );
-    const disposition = classifyIssueExecutionDisposition({
-      issue: {
-        id: issue.id,
-        status: issue.status as IssueStatus,
-        assigneeAgentId: issue.assigneeAgentId,
-        assigneeUserId: issue.assigneeUserId,
-        originKind: issue.originKind,
-      },
-      agent,
-      execution: {
-        activeRun: activePath || activeRunFromLatest,
-      },
-      waits: {
-        openRecoveryIssue: explicitWait,
-      },
-      latestRun: latestRun
-        ? {
-          latestRunStatus: latestRun.status as IssueExecutionRunStatus,
-          livenessState: latestRun.livenessState as IssueExecutionRunLivenessState | null,
-          nextAction: latestRun.nextAction ? "runnable" : "none",
-          continuationAttempt: latestRun.continuationAttempt,
-        }
-        : null,
-      gates: { budgetBlocked },
-    });
-
-    if (disposition.kind === "terminal") return "terminal";
-    if (disposition.kind === "live") return "explicitly_live";
-    if (disposition.kind === "waiting") return "explicitly_waiting";
+    if (issue.status === "done" || issue.status === "cancelled") return "terminal";
+    if (await hasActiveExecutionPath(issue.companyId, issue.id)) return "explicitly_live";
+    if (await hasExplicitWaitingPath(issue)) return "explicitly_waiting";
+    if (latestRun && EXECUTION_PATH_HEARTBEAT_RUN_STATUSES.includes(
+      latestRun.status as (typeof EXECUTION_PATH_HEARTBEAT_RUN_STATUSES)[number],
+    )) {
+      return "explicitly_live";
+    }
     return "invalid";
   }
 
@@ -1345,7 +1303,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   async function recordWatchdogDecision(input: {
     runId: string;
     actor: WatchdogDecisionActor;
-    decision: WatchdogDecision;
+    decision: "snooze" | "continue" | "dismissed_false_positive";
     evaluationIssueId?: string | null;
     reason?: string | null;
     snoozedUntil?: Date | null;
@@ -1358,15 +1316,6 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       .where(eq(heartbeatRuns.id, input.runId))
       .limit(1);
     if (!run) throw notFound("Heartbeat run not found");
-
-    const normalizedReason = typeof input.reason === "string" ? input.reason.trim() : "";
-    if (input.decision === "cancel_run") {
-      if (!normalizedReason) throw badRequest("Cancellation reason is required");
-      if (!input.evaluationIssueId) throw badRequest("evaluationIssueId is required for cancellation");
-      if (!CANCELLABLE_ACTIVE_RUN_RECOVERY_STATUSES.includes(run.status as (typeof CANCELLABLE_ACTIVE_RUN_RECOVERY_STATUSES)[number])) {
-        throw conflict("Heartbeat run is not cancellable", { status: run.status });
-      }
-    }
 
     let evaluationIssue: {
       id: string;
@@ -1454,7 +1403,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         evaluationIssueId: input.evaluationIssueId ?? null,
         decision: input.decision,
         snoozedUntil: effectiveSnoozedUntil,
-        reason: input.decision === "cancel_run" ? normalizedReason : input.reason ?? null,
+        reason: input.reason ?? null,
         createdByAgentId: input.actor.type === "agent" ? input.actor.agentId ?? null : null,
         createdByUserId: input.actor.type === "board" ? input.actor.userId ?? null : null,
         createdByRunId,
@@ -1471,21 +1420,15 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           : "unknown",
       agentId: input.actor.type === "agent" ? input.actor.agentId ?? null : null,
       runId: run.id,
-      action: input.decision === "snooze"
-        ? "heartbeat.watchdog_snoozed"
-        : input.decision === "cancel_run"
-          ? "heartbeat.watchdog_cancel_requested"
-          : "heartbeat.watchdog_decision_recorded",
+      action: input.decision === "snooze" ? "heartbeat.watchdog_snoozed" : "heartbeat.watchdog_decision_recorded",
       entityType: "heartbeat_run",
       entityId: run.id,
       details: {
         source: "recovery.record_watchdog_decision",
         decision: input.decision,
         evaluationIssueId: input.evaluationIssueId ?? null,
-        targetRunId: run.id,
         snoozedUntil: effectiveSnoozedUntil?.toISOString() ?? null,
-        reason: input.decision === "cancel_run" ? normalizedReason : input.reason ?? null,
-        createdByRunId,
+        reason: input.reason ?? null,
       },
     });
 
@@ -2414,36 +2357,31 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     return `${companyId}:${issueId}`;
   }
 
-  type LivenessDependencyTimestamps = {
-    createdAt: Date;
-    updatedAt: Date;
-  };
-
-  async function loadLivenessDependencyTimestampsByIssue(findings: IssueLivenessFinding[]) {
+  async function loadLivenessDependencyUpdatedAtByIssue(findings: IssueLivenessFinding[]) {
     const issueIds = [
       ...new Set(
         findings.flatMap((finding) => finding.dependencyPath.map((entry) => entry.issueId)),
       ),
     ];
-    if (issueIds.length === 0) return new Map<string, LivenessDependencyTimestamps>();
+    if (issueIds.length === 0) return new Map<string, Date>();
     const rows = await db
-      .select({ id: issues.id, companyId: issues.companyId, createdAt: issues.createdAt, updatedAt: issues.updatedAt })
+      .select({ id: issues.id, companyId: issues.companyId, updatedAt: issues.updatedAt })
       .from(issues)
       .where(inArray(issues.id, issueIds));
     return new Map(rows.map((row) => [
       livenessDependencyIssueKey(row.companyId, row.id),
-      { createdAt: row.createdAt, updatedAt: row.updatedAt },
+      row.updatedAt,
     ]));
   }
 
   function latestDependencyUpdatedAtForLivenessFinding(
     finding: IssueLivenessFinding,
-    timestampsByIssueKey: Map<string, LivenessDependencyTimestamps>,
+    updatedAtByIssueKey: Map<string, Date>,
   ) {
     const dependencyIssueIds = [...new Set(finding.dependencyPath.map((entry) => entry.issueId))];
     if (dependencyIssueIds.length === 0) return null;
     const timestamps = dependencyIssueIds.map((issueId) =>
-      timestampsByIssueKey.get(livenessDependencyIssueKey(finding.companyId, issueId))?.updatedAt ?? null
+      updatedAtByIssueKey.get(livenessDependencyIssueKey(finding.companyId, issueId)) ?? null
     );
     if (timestamps.some((timestamp) => !timestamp)) return null;
     const [firstTimestamp, ...remainingTimestamps] = timestamps as Date[];
@@ -2452,22 +2390,13 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     firstTimestamp!);
   }
 
-  function recoveryIssueCreatedAtForLivenessFinding(
-    finding: IssueLivenessFinding,
-    timestampsByIssueKey: Map<string, LivenessDependencyTimestamps>,
-  ) {
-    return timestampsByIssueKey.get(
-      livenessDependencyIssueKey(finding.companyId, finding.recoveryIssueId),
-    )?.createdAt ?? null;
-  }
-
   function isLivenessFindingInsideAutoRecoveryLookback(
     finding: IssueLivenessFinding,
     cutoff: Date,
-    timestampsByIssueKey: Map<string, LivenessDependencyTimestamps>,
+    updatedAtByIssueKey: Map<string, Date>,
   ) {
-    const recoveryIssueCreatedAt = recoveryIssueCreatedAtForLivenessFinding(finding, timestampsByIssueKey);
-    return Boolean(recoveryIssueCreatedAt && recoveryIssueCreatedAt >= cutoff);
+    const latestUpdatedAt = latestDependencyUpdatedAtForLivenessFinding(finding, updatedAtByIssueKey);
+    return Boolean(latestUpdatedAt && latestUpdatedAt >= cutoff);
   }
 
   async function buildIssueGraphLivenessAutoRecoveryPreview(
@@ -2477,7 +2406,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     const lookbackHours = normalizeIssueGraphLivenessAutoRecoveryLookbackHours(opts?.lookbackHours);
     const cutoff = new Date(now.getTime() - lookbackHours * 60 * 60 * 1000);
     const findings = await collectIssueGraphLivenessFindings();
-    const timestampsByIssueKey = await loadLivenessDependencyTimestampsByIssue(findings);
+    const updatedAtByIssueKey = await loadLivenessDependencyUpdatedAtByIssue(findings);
     const issueIds = [...new Set(findings.map((finding) => finding.recoveryIssueId))];
     const recoveryRows = issueIds.length > 0
       ? await db
@@ -2492,12 +2421,9 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     for (const finding of findings) {
       const latestDependencyUpdatedAt = latestDependencyUpdatedAtForLivenessFinding(
         finding,
-        timestampsByIssueKey,
+        updatedAtByIssueKey,
       );
-      if (
-        !latestDependencyUpdatedAt ||
-        !isLivenessFindingInsideAutoRecoveryLookback(finding, cutoff, timestampsByIssueKey)
-      ) {
+      if (!latestDependencyUpdatedAt || latestDependencyUpdatedAt < cutoff) {
         skippedOutsideLookback += 1;
         continue;
       }
@@ -2807,7 +2733,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     const now = new Date();
     const cutoff = new Date(now.getTime() - lookbackHours * 60 * 60 * 1000);
     const obsoleteRecoveryCleanup = await retireObsoleteLivenessRecoveryIssues(findings);
-    const timestampsByIssueKey = await loadLivenessDependencyTimestampsByIssue(findings);
+    const updatedAtByIssueKey = await loadLivenessDependencyUpdatedAtByIssue(findings);
     const result = {
       findings: findings.length,
       autoRecoveryEnabled,
@@ -2832,7 +2758,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     }
 
     for (const finding of findings) {
-      if (!isLivenessFindingInsideAutoRecoveryLookback(finding, cutoff, timestampsByIssueKey)) {
+      if (!isLivenessFindingInsideAutoRecoveryLookback(finding, cutoff, updatedAtByIssueKey)) {
         result.skippedOutsideLookback += 1;
         result.skipped += 1;
         continue;

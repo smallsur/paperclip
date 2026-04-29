@@ -1,17 +1,6 @@
-import type {
-  Approval,
-  AskUserQuestionsInteraction,
-  AskUserQuestionsPayload,
-  IssueBlockerAttention,
-  IssueRelationIssueSummary,
-  IssueThreadInteraction,
-  RequestConfirmationInteraction,
-  SuggestTasksInteraction,
-} from "@paperclipai/shared";
-import { AlertTriangle, ArrowDown, ArrowUp, Hourglass } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import type { IssueBlockerAttention, IssueRelationIssueSummary } from "@paperclipai/shared";
+import { AlertTriangle } from "lucide-react";
 import { createIssueDetailPath } from "../lib/issueDetailBreadcrumb";
-import { formatAssigneeUserLabel } from "../lib/assignees";
 import { IssueLinkQuicklook } from "./IssueLinkQuicklook";
 import { Identity } from "./Identity";
 
@@ -33,94 +22,23 @@ const NEXT_ACTION_VERB: Record<NonNullable<IssueBlockerAttention["nextActionHint
   reassign: "Reassign",
 };
 
-type WaitingActionableInteraction =
-  | RequestConfirmationInteraction
-  | AskUserQuestionsInteraction
-  | SuggestTasksInteraction;
-
-const WAITING_INTERACTION_KINDS: ReadonlySet<string> = new Set([
-  "request_confirmation",
-  "ask_user_questions",
-  "suggest_tasks",
-]);
-
-function isWaitingActionableInteraction(
-  interaction: IssueThreadInteraction,
-): interaction is WaitingActionableInteraction {
-  return WAITING_INTERACTION_KINDS.has(interaction.kind);
-}
-
-function pickLatestPendingInteraction(
-  interactions: IssueThreadInteraction[] | null | undefined,
-): WaitingActionableInteraction | null {
-  if (!interactions || interactions.length === 0) return null;
-  let best: WaitingActionableInteraction | null = null;
-  let bestTime = -Infinity;
-  for (const interaction of interactions) {
-    if (interaction.status !== "pending") continue;
-    if (!isWaitingActionableInteraction(interaction)) continue;
-    const time = new Date(interaction.createdAt as string | Date).getTime();
-    if (Number.isFinite(time) && time > bestTime) {
-      bestTime = time;
-      best = interaction;
-    }
-  }
-  return best;
-}
-
-function pickLatestPendingApproval(approvals: Approval[] | null | undefined): Approval | null {
-  if (!approvals || approvals.length === 0) return null;
-  let best: Approval | null = null;
-  let bestTime = -Infinity;
-  for (const approval of approvals) {
-    if (approval.status !== "pending") continue;
-    const time = new Date(approval.createdAt as string | Date).getTime();
-    if (Number.isFinite(time) && time > bestTime) {
-      bestTime = time;
-      best = approval;
-    }
-  }
-  return best;
-}
-
 export function IssueBlockedNotice({
-  issueId,
-  issueIdentifier,
   issueStatus,
   blockers,
   blockerAttention,
   ownerAgentName,
   ownerUserName,
-  interactions,
-  approvals,
-  agentMap,
-  userLabelMap,
-  currentUserId,
 }: {
-  issueId?: string | null;
-  issueIdentifier?: string | null;
   issueStatus?: string;
   blockers: IssueRelationIssueSummary[];
   blockerAttention?: IssueBlockerAttention | null;
   ownerAgentName?: string | null;
   ownerUserName?: string | null;
-  interactions?: IssueThreadInteraction[] | null;
-  approvals?: Approval[] | null;
-  agentMap?: ReadonlyMap<string, { name: string }> | null;
-  userLabelMap?: ReadonlyMap<string, string> | null;
-  currentUserId?: string | null;
 }) {
   const isRecoveryNeeded = blockerAttention?.state === "recovery_needed"
     && blockerAttention.reason !== null
     && RECOVERY_REASONS.has(blockerAttention.reason);
-  const isExplicitWaiting = blockerAttention?.state === "covered"
-    && blockerAttention.reason === "explicit_waiting";
-  if (
-    blockers.length === 0
-    && issueStatus !== "blocked"
-    && !isRecoveryNeeded
-    && !isExplicitWaiting
-  ) return null;
+  if (blockers.length === 0 && issueStatus !== "blocked" && !isRecoveryNeeded) return null;
 
   const blockerLabel = blockers.length === 1 ? "the linked issue" : "the linked issues";
   const terminalBlockers = blockers
@@ -168,79 +86,37 @@ export function IssueBlockedNotice({
     }
     return candidates;
   })();
+  // Leaf-level surface: the issue itself is the invalid leaf. We render the
+  // rose notice without any blocker chips, using the leaf-perspective copy.
   const isLeafSurface = isRecoveryNeeded && issueStatus !== "blocked";
 
-  // Explicit-wait wins over rose only when state is actually "covered". The
-  // server already gates these so they cannot co-occur on the same issue (rose
-  // wins on tie via the precedence: recovery_needed first, then explicit
-  // waiting), but check explicitly per the spec.
-  const showExplicitWaiting = isExplicitWaiting && !isRecoveryNeeded;
-  const waitLeafIdentifier = showExplicitWaiting
-    ? blockerAttention?.sampleBlockerIdentifier ?? null
-    : null;
-  const isWaitChain = showExplicitWaiting
-    && waitLeafIdentifier !== null
-    && issueIdentifier != null
-    && waitLeafIdentifier !== issueIdentifier;
-  const waitLeafBlockers = (() => {
-    if (!showExplicitWaiting || !isWaitChain) return [] as IssueRelationIssueSummary[];
-    const candidates: IssueRelationIssueSummary[] = [];
-    for (const blocker of [...blockers, ...terminalBlockers]) {
-      if (blocker.status === "done" || blocker.status === "cancelled") continue;
-      if (candidates.some((existing) => existing.id === blocker.id)) continue;
-      candidates.push(blocker);
-    }
-    if (waitLeafIdentifier) {
-      const preferred = candidates.find(
-        (blocker) => (blocker.identifier ?? blocker.id) === waitLeafIdentifier,
-      );
-      if (preferred) {
-        return [preferred, ...candidates.filter((blocker) => blocker.id !== preferred.id)];
-      }
-    }
-    return candidates;
-  })();
+  const containerClass = isRecoveryNeeded
+    ? "mb-3 rounded-md border border-rose-300/70 bg-rose-50/90 px-3 py-2.5 text-sm text-rose-950 shadow-sm dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100"
+    : "mb-3 rounded-md border border-amber-300/70 bg-amber-50/90 px-3 py-2.5 text-sm text-amber-950 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100";
+  const iconClass = isRecoveryNeeded
+    ? "mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300"
+    : "mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300";
+  const subRowLabelClass = isRecoveryNeeded
+    ? "text-xs font-medium text-rose-800 dark:text-rose-200"
+    : "text-xs font-medium text-amber-800 dark:text-amber-200";
 
-  const containerClass = showExplicitWaiting
-    ? "mb-3 rounded-md border border-sky-300/70 bg-sky-50/90 px-3 py-2.5 text-sm text-sky-950 shadow-sm dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-100"
-    : isRecoveryNeeded
-      ? "mb-3 rounded-md border border-rose-300/70 bg-rose-50/90 px-3 py-2.5 text-sm text-rose-950 shadow-sm dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100"
-      : "mb-3 rounded-md border border-amber-300/70 bg-amber-50/90 px-3 py-2.5 text-sm text-amber-950 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100";
-  const iconClass = showExplicitWaiting
-    ? "mt-0.5 h-4 w-4 shrink-0 text-sky-600 dark:text-sky-300"
-    : isRecoveryNeeded
-      ? "mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300"
-      : "mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300";
-  const subRowLabelClass = showExplicitWaiting
-    ? "text-xs font-medium text-sky-800 dark:text-sky-200"
-    : isRecoveryNeeded
-      ? "text-xs font-medium text-rose-800 dark:text-rose-200"
-      : "text-xs font-medium text-amber-800 dark:text-amber-200";
-
-  const renderBlockerChip = (
-    blocker: IssueRelationIssueSummary,
-    variant: "amber" | "rose" | "sky" = "amber",
-  ) => {
+  const renderBlockerChip = (blocker: IssueRelationIssueSummary, variant: "amber" | "rose" = "amber") => {
     const issuePathId = blocker.identifier ?? blocker.id;
-    const chipClassByVariant: Record<typeof variant, string> = {
-      amber: "inline-flex max-w-full items-center gap-1 rounded-md border border-amber-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-amber-950 transition-colors hover:border-amber-500 hover:bg-amber-100 hover:underline dark:border-amber-500/40 dark:bg-background/40 dark:text-amber-100 dark:hover:bg-amber-500/15",
-      rose: "inline-flex max-w-full items-center gap-1 rounded-md border border-rose-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-rose-950 transition-colors hover:border-rose-500 hover:bg-rose-100 hover:underline dark:border-rose-500/40 dark:bg-background/40 dark:text-rose-100 dark:hover:bg-rose-500/15",
-      sky: "inline-flex max-w-full items-center gap-1 rounded-md border border-sky-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-sky-950 transition-colors hover:border-sky-500 hover:bg-sky-100 hover:underline dark:border-sky-500/40 dark:bg-background/40 dark:text-sky-100 dark:hover:bg-sky-500/15",
-    };
-    const labelClassByVariant: Record<typeof variant, string> = {
-      amber: "max-w-[18rem] truncate font-sans text-[11px] text-amber-800 dark:text-amber-200",
-      rose: "max-w-[18rem] truncate font-sans text-[11px] text-rose-800 dark:text-rose-200",
-      sky: "max-w-[18rem] truncate font-sans text-[11px] text-sky-800 dark:text-sky-200",
-    };
+    const chipClass = variant === "rose"
+      ? "inline-flex max-w-full items-center gap-1 rounded-md border border-rose-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-rose-950 transition-colors hover:border-rose-500 hover:bg-rose-100 hover:underline dark:border-rose-500/40 dark:bg-background/40 dark:text-rose-100 dark:hover:bg-rose-500/15"
+      : "inline-flex max-w-full items-center gap-1 rounded-md border border-amber-300/70 bg-background/80 px-2 py-1 font-mono text-xs text-amber-950 transition-colors hover:border-amber-500 hover:bg-amber-100 hover:underline dark:border-amber-500/40 dark:bg-background/40 dark:text-amber-100 dark:hover:bg-amber-500/15";
+    const labelClass = variant === "rose"
+      ? "max-w-[18rem] truncate font-sans text-[11px] text-rose-800 dark:text-rose-200"
+      : "max-w-[18rem] truncate font-sans text-[11px] text-amber-800 dark:text-amber-200";
     return (
       <IssueLinkQuicklook
         key={blocker.id}
         issuePathId={issuePathId}
         to={createIssueDetailPath(issuePathId)}
-        className={chipClassByVariant[variant]}
+        className={chipClass}
       >
         <span>{blocker.identifier ?? blocker.id.slice(0, 8)}</span>
-        <span className={labelClassByVariant[variant]}>{blocker.title}</span>
+        <span className={labelClass}>{blocker.title}</span>
       </IssueLinkQuicklook>
     );
   };
@@ -278,166 +154,6 @@ export function IssueBlockedNotice({
     );
   };
 
-  // ----- Explicit waiting helpers -----
-
-  const ownerLabel = (() => {
-    const owner = blockerAttention?.nextActionOwner ?? null;
-    if (!owner) return "the next reviewer";
-    if (owner.type === "user") {
-      if (!owner.userId) return "the board";
-      const resolved = formatAssigneeUserLabel(owner.userId, currentUserId ?? null, userLabelMap ?? undefined);
-      if (resolved) return resolved;
-      return ownerUserName ?? "the user";
-    }
-    if (owner.type === "agent") {
-      if (owner.agentId && agentMap) {
-        const agent = agentMap.get(owner.agentId);
-        if (agent?.name) return agent.name;
-      }
-      return ownerAgentName ?? "the agent";
-    }
-    return "the next reviewer";
-  })();
-
-  const pendingInteraction = showExplicitWaiting && !isWaitChain
-    ? pickLatestPendingInteraction(interactions ?? null)
-    : null;
-  const pendingApproval = showExplicitWaiting && !pendingInteraction && !isWaitChain
-    ? pickLatestPendingApproval(approvals ?? null)
-    : null;
-
-  const isPlanConfirmation = (interaction: WaitingActionableInteraction): boolean => {
-    if (interaction.kind !== "request_confirmation") return false;
-    const target = interaction.payload?.target ?? null;
-    if (!target) return false;
-    if (target.type === "issue_document") return target.key === "plan";
-    return false;
-  };
-
-  const explicitWaitingHeadline = (() => {
-    if (!showExplicitWaiting) return null;
-    if (isWaitChain) {
-      return <>Waiting on {ownerLabel} downstream.</>;
-    }
-    if (pendingInteraction) {
-      if (pendingInteraction.kind === "request_confirmation") {
-        if (isPlanConfirmation(pendingInteraction)) {
-          return <>Waiting on board confirmation.</>;
-        }
-        return <>Waiting on confirmation.</>;
-      }
-      if (pendingInteraction.kind === "ask_user_questions") {
-        return <>Waiting on user response.</>;
-      }
-      if (pendingInteraction.kind === "suggest_tasks") {
-        return <>Waiting on task selection.</>;
-      }
-    }
-    if (pendingApproval) {
-      return <>Waiting on board approval.</>;
-    }
-    return <>Waiting on {ownerLabel}.</>;
-  })();
-
-  const explicitWaitingBody = (() => {
-    if (!showExplicitWaiting) return null;
-    if (isWaitChain) {
-      const leafChip = waitLeafIdentifier
-        ? <span className="font-mono text-xs">[{waitLeafIdentifier}]</span>
-        : null;
-      return leafChip
-        ? <>Work on this issue is paused while {ownerLabel} responds in {leafChip}. Nothing here will resume until that is resolved.</>
-        : <>Work on this issue is paused while {ownerLabel} responds downstream. Nothing here will resume until that is resolved.</>;
-    }
-    if (pendingInteraction) {
-      if (pendingInteraction.kind === "request_confirmation") {
-        if (isPlanConfirmation(pendingInteraction)) {
-          return <>Paperclip drafted a plan and asked the board to accept or reject it. Nothing will run until that's resolved.</>;
-        }
-        return <>Paperclip is waiting on {ownerLabel} to accept or reject.</>;
-      }
-      if (pendingInteraction.kind === "ask_user_questions") {
-        const payload = pendingInteraction.payload as AskUserQuestionsPayload;
-        const count = payload?.questions?.length ?? 0;
-        const noun = count === 1 ? "question" : "questions";
-        if (count > 0) {
-          return <>Paperclip asked {ownerLabel} {count} {noun} before continuing.</>;
-        }
-        return <>Paperclip asked {ownerLabel} for a response before continuing.</>;
-      }
-      if (pendingInteraction.kind === "suggest_tasks") {
-        const count = pendingInteraction.payload?.tasks?.length ?? 0;
-        if (count > 0) {
-          return <>Paperclip suggested {count} {count === 1 ? "task" : "tasks"}; pick which to create.</>;
-        }
-        return <>Paperclip suggested tasks for {ownerLabel} to pick which to create.</>;
-      }
-    }
-    if (pendingApproval) {
-      return <>A board approval is open against this issue.</>;
-    }
-    return <>This issue is on hold pending a human decision.</>;
-  })();
-
-  const explicitWaitingResumeLabel = (() => {
-    if (pendingInteraction) {
-      const policy = pendingInteraction.continuationPolicy ?? "none";
-      if (policy === "wake_assignee" || policy === "wake_assignee_on_accept") {
-        if (pendingInteraction.kind === "request_confirmation") {
-          return `Resumes when ${ownerLabel} accepts. Rejection returns to the assignee with reason.`;
-        }
-        if (pendingInteraction.kind === "ask_user_questions") {
-          return `Resumes when ${ownerLabel} answers.`;
-        }
-        if (pendingInteraction.kind === "suggest_tasks") {
-          return `Resumes when ${ownerLabel} picks tasks to create.`;
-        }
-      }
-      return "Does not auto-resume — assignee must restart.";
-    }
-    if (pendingApproval) {
-      return "Resumes on approval decision.";
-    }
-    return null;
-  })();
-
-  const explicitWaitingDetails = (() => {
-    if (!showExplicitWaiting) return null;
-
-    const labelClass = "shrink-0 text-[10px] uppercase tracking-wide text-sky-700/80 dark:text-sky-300/80";
-    return (
-      <dl className="space-y-0.5 pt-0.5 text-xs text-sky-900 dark:text-sky-100">
-        <div className="flex flex-wrap items-baseline gap-1.5">
-          <dt className={labelClass}>Owner</dt>
-          <dd className="min-w-0 break-words">{ownerLabel}</dd>
-        </div>
-        {explicitWaitingResumeLabel ? (
-          <div className="flex flex-wrap items-baseline gap-1.5">
-            <dt className={labelClass}>Resume</dt>
-            <dd className="min-w-0 break-words">{explicitWaitingResumeLabel}</dd>
-          </div>
-        ) : null}
-      </dl>
-    );
-  })();
-
-  const explicitWaitingJumpAnchor = (() => {
-    if (!showExplicitWaiting) return null;
-    let anchorId: string | null = null;
-    let label: string | null = null;
-    if (pendingInteraction) {
-      anchorId = `interaction-${pendingInteraction.id}`;
-      if (pendingInteraction.kind === "request_confirmation") label = "Jump to confirmation";
-      else if (pendingInteraction.kind === "ask_user_questions") label = "Jump to questions";
-      else if (pendingInteraction.kind === "suggest_tasks") label = "Jump to suggestions";
-    } else if (pendingApproval) {
-      anchorId = `approval-${pendingApproval.id}`;
-      label = "Jump to approval";
-    }
-    if (!anchorId || !label) return null;
-    return <ExplicitWaitingJumpAnchor anchorId={anchorId} label={label} />;
-  })();
-
   const ownerPill = (() => {
     if (!isRecoveryNeeded) return null;
     const owner = blockerAttention?.nextActionOwner ?? null;
@@ -468,8 +184,6 @@ export function IssueBlockedNotice({
     );
   })();
 
-  void issueId; // currently unused; reserved for future deep-anchor wiring
-
   return (
     <div
       data-blocker-attention-state={blockerAttention?.state}
@@ -477,19 +191,10 @@ export function IssueBlockedNotice({
       className={containerClass}
     >
       <div className="flex items-start gap-2">
-        {showExplicitWaiting ? (
-          <Hourglass className={iconClass} aria-hidden />
-        ) : (
-          <AlertTriangle className={iconClass} />
-        )}
+        <AlertTriangle className={iconClass} />
         <div className="min-w-0 space-y-1.5">
           <p className="leading-5">
-            {showExplicitWaiting ? (
-              <>
-                <strong>{explicitWaitingHeadline}</strong>
-                {explicitWaitingBody ? <> {explicitWaitingBody}</> : null}
-              </>
-            ) : isRecoveryNeeded
+            {isRecoveryNeeded
               ? isLeafSurface
                 ? recoveryLeafCopy(blockerAttention!.reason as RecoveryReason)
                 : recoveryParentCopy(
@@ -504,35 +209,23 @@ export function IssueBlockedNotice({
                   : <>Work on this issue is blocked by {blockerLabel} until {blockers.length === 1 ? "it is" : "they are"} complete. Comments still wake the assignee for questions or triage.</>
                 : <>Work on this issue is blocked until it is moved back to todo. Comments still wake the assignee for questions or triage.</>}
           </p>
-          {showExplicitWaiting ? (
-            <>
-              {explicitWaitingDetails}
-              {isWaitChain && waitLeafBlockers.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <span className={subRowLabelClass}>Waiting at</span>
-                  {waitLeafBlockers.map((blocker) => renderBlockerChip(blocker, "sky"))}
-                </div>
-              ) : null}
-              {explicitWaitingJumpAnchor}
-            </>
-          ) : null}
-          {!showExplicitWaiting && !isRecoveryNeeded && blockers.length > 0 ? (
+          {!isRecoveryNeeded && blockers.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {blockers.map((blocker) => renderBlockerChip(blocker, "amber"))}
             </div>
           ) : null}
-          {!showExplicitWaiting && isRecoveryNeeded && !isLeafSurface && recoveryLeafBlockers.length > 0 ? (
+          {isRecoveryNeeded && !isLeafSurface && recoveryLeafBlockers.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
               <span className={subRowLabelClass}>Liveness break at</span>
               {recoveryLeafBlockers.map((blocker) => renderBlockerChip(blocker, "rose"))}
             </div>
           ) : null}
-          {!showExplicitWaiting && !isRecoveryNeeded && showStalledRow ? (
+          {!isRecoveryNeeded && showStalledRow ? (
             <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
               <span className={subRowLabelClass}>Stalled in review</span>
               {stalledLeafBlockers.map((blocker) => renderBlockerChip(blocker, "amber"))}
             </div>
-          ) : !showExplicitWaiting && !isRecoveryNeeded && terminalBlockers.length > 0 ? (
+          ) : !isRecoveryNeeded && terminalBlockers.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
               <span className={subRowLabelClass}>Ultimately waiting on</span>
               {terminalBlockers.map((blocker) => renderBlockerChip(blocker, "amber"))}
@@ -542,51 +235,5 @@ export function IssueBlockedNotice({
         </div>
       </div>
     </div>
-  );
-}
-
-function ExplicitWaitingJumpAnchor({ anchorId, label }: { anchorId: string; label: string }) {
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const [direction, setDirection] = useState<"up" | "down">("down");
-
-  useEffect(() => {
-    const button = buttonRef.current;
-    if (!button) return;
-    const update = () => {
-      const target = document.getElementById(anchorId);
-      if (!target) return;
-      const targetRect = target.getBoundingClientRect();
-      const buttonRect = button.getBoundingClientRect();
-      const targetMid = targetRect.top + targetRect.height / 2;
-      const buttonMid = buttonRect.top + buttonRect.height / 2;
-      setDirection(targetMid < buttonMid ? "up" : "down");
-    };
-    update();
-    window.addEventListener("scroll", update, { passive: true, capture: true });
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, { capture: true } as EventListenerOptions);
-      window.removeEventListener("resize", update);
-    };
-  }, [anchorId]);
-
-  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    const target = document.getElementById(anchorId);
-    if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const Arrow = direction === "up" ? ArrowUp : ArrowDown;
-  return (
-    <button
-      type="button"
-      ref={buttonRef}
-      onClick={handleClick}
-      className="inline-flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline dark:text-sky-300"
-    >
-      {label}
-      <Arrow className="h-3 w-3" aria-hidden />
-    </button>
   );
 }

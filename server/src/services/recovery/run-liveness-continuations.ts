@@ -1,18 +1,18 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agentWakeupRequests, agents, heartbeatRuns, issues } from "@paperclipai/db";
-import type { IssueStatus, RunLivenessState } from "@paperclipai/shared";
+import type { RunLivenessState } from "@paperclipai/shared";
 import { RECOVERY_REASON_KINDS } from "./origins.js";
-import {
-  classifyIssueExecutionDisposition,
-  type IssueExecutionRunLivenessState,
-  type IssueExecutionNextActionState,
-} from "../issue-execution-disposition.js";
 
 export const RUN_LIVENESS_CONTINUATION_REASON = RECOVERY_REASON_KINDS.runLivenessContinuation;
 export const DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS = 2;
 
+const ACTIONABLE_LIVENESS_STATES = new Set<RunLivenessState>(["plan_only", "empty_response"]);
+const PROGRESS_WITH_FOLLOWUP_LIVENESS_STATES = new Set<RunLivenessState>(["advanced"]);
 const CONTINUATION_ACTIVE_ISSUE_STATUSES = new Set(["todo", "in_progress"]);
+// A prior adapter error should not permanently suppress bounded liveness
+// continuations; the max-attempt/idempotency guards prevent unbounded retries.
+const CONTINUATION_AGENT_STATUSES = new Set(["active", "idle", "running", "error"]);
 const IDEMPOTENT_WAKE_STATUSES = ["queued", "deferred_issue_execution", "completed"];
 
 type HeartbeatRunRow = Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId" | "agentId" | "continuationAttempt">;
@@ -59,14 +59,6 @@ export function buildRunLivenessContinuationIdempotencyKey(input: {
     input.livenessState,
     String(input.nextAttempt),
   ].join(":");
-}
-
-function nextActionStateForContinuation(nextAction: string | null): IssueExecutionNextActionState {
-  return nextAction?.trim() ? "runnable" : "none";
-}
-
-function livenessStateForDisposition(livenessState: RunLivenessState): IssueExecutionRunLivenessState {
-  return livenessState;
 }
 
 export async function findExistingRunLivenessContinuationWake(
@@ -117,6 +109,13 @@ export function decideRunLivenessContinuation(input: {
     return { kind: "skip", reason: "liveness state is not actionable for continuation" };
   }
 
+  const hasExplicitRunnableFollowup = Boolean(nextAction?.trim());
+  const livenessCanContinue =
+    ACTIONABLE_LIVENESS_STATES.has(livenessState) ||
+    PROGRESS_WITH_FOLLOWUP_LIVENESS_STATES.has(livenessState) && hasExplicitRunnableFollowup;
+  if (!livenessCanContinue) {
+    return { kind: "skip", reason: "liveness state is not actionable for continuation" };
+  }
   if (!issue) return { kind: "skip", reason: "issue not found" };
   if (!agent) return { kind: "skip", reason: "agent not found" };
   if (issue.companyId !== run.companyId || agent.companyId !== run.companyId) {
@@ -131,48 +130,14 @@ export function decideRunLivenessContinuation(input: {
   if (issue.executionState) {
     return { kind: "skip", reason: "issue is blocked by execution policy state" };
   }
-
-  const currentAttempt = readContinuationAttempt(run.continuationAttempt);
-  const disposition = classifyIssueExecutionDisposition({
-    issue: {
-      id: issue.id,
-      status: issue.status as IssueStatus,
-      assigneeAgentId: issue.assigneeAgentId,
-      assigneeUserId: null,
-    },
-    agent,
-    latestRun: {
-      latestRunStatus: "succeeded",
-      livenessState: livenessStateForDisposition(livenessState),
-      nextAction: nextActionStateForContinuation(nextAction),
-      continuationAttempt: currentAttempt,
-      maxContinuationAttempts: maxAttempts,
-    },
-    gates: { budgetBlocked },
-  });
-
+  if (!CONTINUATION_AGENT_STATUSES.has(agent.status)) {
+    return { kind: "skip", reason: `agent status ${agent.status} is not invokable` };
+  }
   if (budgetBlocked) {
     return { kind: "skip", reason: "budget hard stop blocks continuation" };
   }
-  if (disposition.kind === "human_escalation_required" && disposition.owner === "manager" && currentAttempt >= maxAttempts) {
-    return {
-      kind: "exhausted",
-      attempt: currentAttempt,
-      maxAttempts,
-      comment: [
-        "Bounded liveness continuation exhausted",
-        "",
-        `- Last liveness state: \`${livenessState}\``,
-        `- Attempts used: ${currentAttempt}/${maxAttempts}`,
-        `- Reason: ${livenessReason ?? "Run ended without concrete progress"}`,
-        "- Next action: a human or manager should inspect the run and either clarify the task, mark it blocked, or assign a concrete follow-up.",
-      ].join("\n"),
-    };
-  }
-  if (disposition.kind !== "agent_continuable") {
-    return { kind: "skip", reason: `canonical disposition ${disposition.kind} is not continuable` };
-  }
 
+  const currentAttempt = readContinuationAttempt(run.continuationAttempt);
   if (currentAttempt >= maxAttempts) {
     return {
       kind: "exhausted",

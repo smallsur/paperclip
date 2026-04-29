@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
-  activityLog,
   agents,
   companies,
   createDb,
@@ -354,87 +353,6 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
     });
   });
 
-  it("lets the assigned recovery owner record cancel_run and uses the normal cancellation path", async () => {
-    const now = new Date("2026-04-22T20:00:00.000Z");
-    const { companyId, managerId, runId, issueId } = await seedRunningRun({
-      now,
-      ageMs: ACTIVE_RUN_OUTPUT_CRITICAL_THRESHOLD_MS + 60_000,
-    });
-    const heartbeat = heartbeatService(db);
-    const recovery = recoveryService(db, { enqueueWakeup: vi.fn() });
-
-    const scan = await heartbeat.scanSilentActiveRuns({ now, companyId });
-    const evaluationIssueId = scan.evaluationIssueIds[0];
-    expect(evaluationIssueId).toBeTruthy();
-
-    const managerRunId = randomUUID();
-    await db.insert(heartbeatRuns).values({
-      id: managerRunId,
-      companyId,
-      agentId: managerId,
-      status: "succeeded",
-      invocationSource: "assignment",
-      triggerDetail: "system",
-      startedAt: now,
-      finishedAt: now,
-      processStartedAt: now,
-      lastOutputAt: now,
-      lastOutputSeq: 1,
-      lastOutputStream: "stdout",
-      contextSnapshot: {},
-      logBytes: 0,
-    });
-
-    const decision = await recovery.recordWatchdogDecision({
-      runId,
-      actor: { type: "agent", agentId: managerId, runId: managerRunId },
-      decision: "cancel_run",
-      evaluationIssueId,
-      reason: "Run is silent and evidence shows it is stuck",
-    });
-
-    expect(decision).toMatchObject({
-      runId,
-      evaluationIssueId,
-      decision: "cancel_run",
-      reason: "Run is silent and evidence shows it is stuck",
-      createdByAgentId: managerId,
-      createdByRunId: managerRunId,
-    });
-
-    const cancelled = await heartbeat.cancelRun(runId, decision.reason ?? undefined);
-    expect(cancelled).toMatchObject({
-      id: runId,
-      status: "cancelled",
-      error: "Run is silent and evidence shows it is stuck",
-      errorCode: "cancelled",
-    });
-
-    const [sourceIssue] = await db.select().from(issues).where(eq(issues.id, issueId));
-    expect(sourceIssue?.executionRunId).toBeNull();
-    expect(sourceIssue?.executionLockedAt).toBeNull();
-
-    const [audit] = await db
-      .select()
-      .from(activityLog)
-      .where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "heartbeat.watchdog_cancel_requested")));
-    expect(audit).toMatchObject({
-      actorType: "agent",
-      actorId: managerId,
-      agentId: managerId,
-      runId,
-      entityType: "heartbeat_run",
-      entityId: runId,
-    });
-    expect(audit?.details).toMatchObject({
-      decision: "cancel_run",
-      evaluationIssueId,
-      targetRunId: runId,
-      reason: "Run is silent and evidence shows it is stuck",
-      createdByRunId: managerRunId,
-    });
-  });
-
   it("re-arms continue decisions after the default quiet window", async () => {
     const now = new Date("2026-04-22T20:00:00.000Z");
     const { companyId, managerId, runId } = await seedRunningRun({
@@ -552,7 +470,6 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
         snoozedUntil: new Date(now.getTime() + 60 * 60 * 1000),
       },
       { decision: "continue" as const, evaluationIssueId: otherEvaluationIssueId },
-      { decision: "cancel_run" as const, evaluationIssueId: otherEvaluationIssueId },
     ];
 
     for (const attempt of attempts) {
@@ -576,61 +493,6 @@ describeEmbeddedPostgres("active-run output watchdog", () => {
         reason: "closed evaluation should not authorize",
       }),
     ).rejects.toMatchObject({ status: 403 });
-  });
-
-  it("rejects cancel_run for terminal runs before writing a decision", async () => {
-    const now = new Date("2026-04-22T20:00:00.000Z");
-    const { companyId, managerId, runId } = await seedRunningRun({
-      now,
-      ageMs: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS + 60_000,
-    });
-    const heartbeat = heartbeatService(db);
-    const recovery = recoveryService(db, { enqueueWakeup: vi.fn() });
-
-    const scan = await heartbeat.scanSilentActiveRuns({ now, companyId });
-    const evaluationIssueId = scan.evaluationIssueIds[0];
-    expect(evaluationIssueId).toBeTruthy();
-    await db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: now }).where(eq(heartbeatRuns.id, runId));
-
-    await expect(
-      recovery.recordWatchdogDecision({
-        runId,
-        actor: { type: "agent", agentId: managerId },
-        decision: "cancel_run",
-        evaluationIssueId,
-        reason: "Too late to cancel",
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-
-    const rows = await db
-      .select()
-      .from(heartbeatRunWatchdogDecisions)
-      .where(and(eq(heartbeatRunWatchdogDecisions.runId, runId), eq(heartbeatRunWatchdogDecisions.decision, "cancel_run")));
-    expect(rows).toHaveLength(0);
-  });
-
-  it("requires an evaluation issue for cancel_run decisions", async () => {
-    const now = new Date("2026-04-22T20:00:00.000Z");
-    const { managerId, runId } = await seedRunningRun({
-      now,
-      ageMs: ACTIVE_RUN_OUTPUT_SUSPICION_THRESHOLD_MS + 60_000,
-    });
-    const recovery = recoveryService(db, { enqueueWakeup: vi.fn() });
-
-    await expect(
-      recovery.recordWatchdogDecision({
-        runId,
-        actor: { type: "agent", agentId: managerId },
-        decision: "cancel_run",
-        reason: "No evaluation issue binding",
-      }),
-    ).rejects.toMatchObject({ status: 400 });
-
-    const rows = await db
-      .select()
-      .from(heartbeatRunWatchdogDecisions)
-      .where(and(eq(heartbeatRunWatchdogDecisions.runId, runId), eq(heartbeatRunWatchdogDecisions.decision, "cancel_run")));
-    expect(rows).toHaveLength(0);
   });
 
   it("validates createdByRunId before storing watchdog decisions", async () => {

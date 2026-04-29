@@ -1113,21 +1113,6 @@ export function issueRoutes(
         documentsSvc.getIssueDocumentByKey(issue.id, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY),
         currentExecutionWorkspacePromise,
       ]);
-    const executionDisposition = await svc
-      .listExecutionDispositions(issue.companyId, [
-        {
-          id: issue.id,
-          companyId: issue.companyId,
-          status: issue.status,
-          assigneeAgentId: issue.assigneeAgentId,
-          assigneeUserId: issue.assigneeUserId,
-          originKind: issue.originKind ?? null,
-          executionRunId: issue.executionRunId ?? null,
-          executionState: issue.executionState ?? null,
-          blockedBy: relations.blockedBy,
-        },
-      ])
-      .then((map) => map.get(issue.id) ?? null);
 
     res.json({
       issue: {
@@ -1137,7 +1122,6 @@ export function issueRoutes(
         description: issue.description,
         status: issue.status,
         ...(blockerAttention ? { blockerAttention } : {}),
-        ...(executionDisposition ? { executionDisposition } : {}),
         productivityReview,
         priority: issue.priority,
         projectId: issue.projectId,
@@ -1236,27 +1220,11 @@ export function issueRoutes(
       ? await executionWorkspacesSvc.getById(issue.executionWorkspaceId)
       : null;
     const workProducts = await workProductsSvc.listForIssue(issue.id);
-    const executionDisposition = await svc
-      .listExecutionDispositions(issue.companyId, [
-        {
-          id: issue.id,
-          companyId: issue.companyId,
-          status: issue.status,
-          assigneeAgentId: issue.assigneeAgentId,
-          assigneeUserId: issue.assigneeUserId,
-          originKind: issue.originKind ?? null,
-          executionRunId: issue.executionRunId ?? null,
-          executionState: issue.executionState ?? null,
-          blockedBy: relations.blockedBy,
-        },
-      ])
-      .then((map) => map.get(issue.id) ?? null);
     res.json({
       ...issue,
       goalId: goal?.id ?? issue.goalId,
       ancestors,
       ...(blockerAttention ? { blockerAttention } : {}),
-      ...(executionDisposition ? { executionDisposition } : {}),
       productivityReview,
       blockedBy: relations.blockedBy,
       blocks: relations.blocks,
@@ -2115,6 +2083,10 @@ export function issueRoutes(
       }
     }
 
+    const runToCancelForCancelledStatus = shouldCancelActiveRunForCancelledStatus
+      ? await resolveActiveIssueRun(existing)
+      : null;
+
     if (hiddenAtRaw !== undefined) {
       updateFields.hiddenAt = hiddenAtRaw ? new Date(hiddenAtRaw) : null;
     }
@@ -2297,50 +2269,26 @@ export function issueRoutes(
       return;
     }
 
-    const cancelledStatusRunIds: string[] = [];
-    const cancelledStatusWakeupIds: string[] = [];
-    if (shouldCancelActiveRunForCancelledStatus) {
+    let cancelledStatusRunId: string | null = null;
+    if (runToCancelForCancelledStatus) {
       try {
-        const cancelled = await heartbeat.cancelIssueRuns({
-          companyId: issue.companyId,
-          issueId: issue.id,
-          reason: "Cancelled because the issue was marked cancelled",
-        });
-        for (const cancelledRun of cancelled.runs) {
-          cancelledStatusRunIds.push(cancelledRun.id);
+        const cancelled = await heartbeat.cancelRun(runToCancelForCancelledStatus.id);
+        if (cancelled) {
+          cancelledStatusRunId = cancelled.id;
           await logActivity(db, {
-            companyId: cancelledRun.companyId,
+            companyId: cancelled.companyId,
             actorType: actor.actorType,
             actorId: actor.actorId,
             agentId: actor.agentId,
             runId: actor.runId,
             action: "heartbeat.cancelled",
             entityType: "heartbeat_run",
-            entityId: cancelledRun.id,
-            details: { agentId: cancelledRun.agentId, source: "issue_status_cancelled", issueId: existing.id },
-          });
-        }
-        for (const cancelledWakeup of cancelled.wakeups) {
-          cancelledStatusWakeupIds.push(cancelledWakeup.id);
-          await logActivity(db, {
-            companyId: issue.companyId,
-            actorType: actor.actorType,
-            actorId: actor.actorId,
-            agentId: actor.agentId,
-            runId: actor.runId,
-            action: "issue.wakeup_cancelled",
-            entityType: "agent_wakeup_request",
-            entityId: cancelledWakeup.id,
-            details: {
-              agentId: cancelledWakeup.agentId,
-              previousReason: cancelledWakeup.reason,
-              source: "issue_status_cancelled",
-              issueId: existing.id,
-            },
+            entityId: cancelled.id,
+            details: { agentId: cancelled.agentId, source: "issue_status_cancelled", issueId: existing.id },
           });
         }
       } catch (err) {
-        logger.warn({ err, issueId: existing.id }, "failed to cancel runs for cancelled issue");
+        logger.warn({ err, issueId: existing.id, runId: runToCancelForCancelledStatus.id }, "failed to cancel run for cancelled issue");
         await logActivity(db, {
           companyId: existing.companyId,
           actorType: actor.actorType,
@@ -2348,8 +2296,8 @@ export function issueRoutes(
           agentId: actor.agentId,
           runId: actor.runId,
           action: "heartbeat.cancel_failed",
-          entityType: "issue",
-          entityId: existing.id,
+          entityType: "heartbeat_run",
+          entityId: runToCancelForCancelledStatus.id,
           details: { source: "issue_status_cancelled", issueId: existing.id },
         });
       }
@@ -2421,13 +2369,7 @@ export function issueRoutes(
         ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
-        ...(cancelledStatusRunIds.length > 0
-          ? {
-              cancelledStatusRunId: cancelledStatusRunIds[0],
-              cancelledStatusRunIds,
-            }
-          : {}),
-        ...(cancelledStatusWakeupIds.length > 0 ? { cancelledStatusWakeupIds } : {}),
+        ...(cancelledStatusRunId ? { cancelledStatusRunId } : {}),
         _previous: hasFieldChanges ? previous : undefined,
         ...summarizeIssueReferenceActivityDetails(
           updateReferenceDiff

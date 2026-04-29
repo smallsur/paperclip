@@ -227,40 +227,6 @@ describe("IssueRow", () => {
     });
   });
 
-  it("renders the sky waiting pill with the resolved owner label when blockerAttention.reason is explicit_waiting", () => {
-    const root = createRoot(container);
-    const issue = createIssue({
-      blockerAttention: {
-        state: "covered",
-        reason: "explicit_waiting",
-        unresolvedBlockerCount: 0,
-        coveredBlockerCount: 0,
-        stalledBlockerCount: 0,
-        attentionBlockerCount: 0,
-        sampleBlockerIdentifier: null,
-        sampleStalledBlockerIdentifier: null,
-        nextActionOwner: { type: "user", agentId: null, userId: null },
-        nextActionHint: "needs_human_review",
-      },
-    });
-
-    act(() => {
-      root.render(<IssueRow issue={issue} />);
-    });
-
-    const pills = Array.from(container.querySelectorAll<HTMLSpanElement>("span"))
-      .filter(
-        (element) => element.textContent === "Waiting · board"
-          && element.className.includes("border-sky-200/80"),
-      );
-    expect(pills.length).toBeGreaterThan(0);
-    expect(pills[0]?.getAttribute("title")).toBe("Waiting · board");
-
-    act(() => {
-      root.unmount();
-    });
-  });
-
   it("renders without error when titleSuffix is omitted", () => {
     const root = createRoot(container);
 

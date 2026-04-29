@@ -129,56 +129,6 @@ describe("StatusIcon", () => {
     expect(html).toContain('aria-label="Blocked · liveness break at PAP-2642 · automatic continuation exhausted"');
   });
 
-  it("renders explicit_waiting issues with sky ring and waiting-on-board copy", () => {
-    const html = renderToStaticMarkup(
-      <StatusIcon
-        status="in_progress"
-        blockerAttention={{
-          state: "covered",
-          reason: "explicit_waiting",
-          unresolvedBlockerCount: 0,
-          coveredBlockerCount: 0,
-          stalledBlockerCount: 0,
-          attentionBlockerCount: 0,
-          sampleBlockerIdentifier: null,
-          sampleStalledBlockerIdentifier: null,
-          nextActionOwner: { type: "user", agentId: null, userId: null },
-          nextActionHint: "needs_human_review",
-        }}
-      />,
-    );
-
-    expect(html).toContain('data-blocker-attention-state="explicit_waiting"');
-    expect(html).toContain('aria-label="Waiting on board"');
-    expect(html).toContain("border-sky-600");
-    expect(html).not.toContain("border-cyan-600");
-    expect(html).not.toContain("border-red-600");
-    expect(html).toContain("-bottom-0.5");
-  });
-
-  it("prefixes the explicit waiting tooltip with Blocked when the issue is also blocked", () => {
-    const html = renderToStaticMarkup(
-      <StatusIcon
-        status="blocked"
-        blockerAttention={{
-          state: "covered",
-          reason: "explicit_waiting",
-          unresolvedBlockerCount: 0,
-          coveredBlockerCount: 0,
-          stalledBlockerCount: 0,
-          attentionBlockerCount: 0,
-          sampleBlockerIdentifier: "PAP-3000",
-          sampleStalledBlockerIdentifier: null,
-          nextActionOwner: { type: "user", agentId: null, userId: "user-1" },
-          nextActionHint: "needs_human_review",
-        }}
-      />,
-    );
-
-    expect(html).toContain('aria-label="Blocked · waiting on user"');
-    expect(html).toContain("border-sky-600");
-  });
-
   it("renders stalled review chains with amber visual and stalled-leaf copy", () => {
     const html = renderToStaticMarkup(
       <StatusIcon

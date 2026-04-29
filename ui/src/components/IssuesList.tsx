@@ -665,14 +665,6 @@ export function IssuesList({
     return agents.find((a) => a.id === id)?.name ?? null;
   }, [agents]);
 
-  const agentNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const agent of agents ?? []) {
-      map.set(agent.id, agent.name);
-    }
-    return map;
-  }, [agents]);
-
   const companyUserLabelMap = useMemo(
     () => buildCompanyUserLabelMap(companyMembers?.users),
     [companyMembers?.users],
@@ -1481,9 +1473,6 @@ export function IssuesList({
                       <IssueRow
                         issue={issue}
                         issueLinkState={issueLinkState}
-                        agentNameMap={agentNameById}
-                        userLabelMap={companyUserLabelMap}
-                        currentUserId={currentUserId}
                         checklistStepNumber={checklistStepNumber}
                         checklistCurrentStep={checklistMeta?.currentStepIssueId === issue.id}
                         checklistDependencyChips={checklistDependencyChips}

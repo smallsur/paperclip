@@ -33,7 +33,6 @@ import type {
   IssueBlockerAttentionState,
   IssueBlockerNextActionHint,
   IssueBlockerNextActionOwner,
-  IssueStatus,
   IssueProductivityReview,
   IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
@@ -60,17 +59,6 @@ import {
   isLiveExplicitApprovalWaitingPath,
   isLiveExplicitInteractionWaitingPath,
 } from "./recovery/explicit-waiting-paths.js";
-import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
-import {
-  classifyIssueExecutionDisposition,
-  type IssueExecutionRunLivenessState,
-} from "./issue-execution-disposition.js";
-import {
-  backfillBlockedBySummaries,
-  listIssueExecutionDispositionsMap,
-  type IssueExecutionDispositionInputNode,
-} from "./issue-execution-disposition-resolver.js";
-import { assertIssueTransitionAllowed } from "./issue-transition-guard.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -896,37 +884,6 @@ function classifyLeafRecovery(input: {
   // the existing "no owner" surface continues to apply.
   if (owner.type === "none") return null;
 
-  const disposition = classifyIssueExecutionDisposition({
-    issue: {
-      id: node.id,
-      status: node.status as IssueStatus,
-      assigneeAgentId: node.assigneeAgentId,
-      assigneeUserId: node.assigneeUserId,
-    },
-    agent: node.assigneeAgentId
-      ? {
-        id: node.assigneeAgentId,
-        status: agentInvokable ? "idle" : "paused",
-      }
-      : null,
-    execution: {
-      activeRun: hasActivePath,
-    },
-    waits: {
-      productivityReviewNeeded: hasProductivityReview,
-    },
-    latestRun: {
-      latestRunStatus: "succeeded",
-      livenessState: latestRun.livenessState as IssueExecutionRunLivenessState,
-      nextAction: "runnable",
-      continuationAttempt: latestRun.continuationAttempt,
-      maxContinuationAttempts,
-    },
-  });
-  if (disposition.kind !== "agent_continuable" && disposition.kind !== "human_escalation_required") {
-    return null;
-  }
-
   let reason: LeafRecoveryClassification["reason"];
   if (hasProductivityReview) {
     reason = "continuation_suppressed";
@@ -1428,36 +1385,29 @@ async function listIssueBlockerAttentionMap(
         })));
       }
 
-    }
-
-    const recoveryRows: Array<{
-      id: string;
-      originId: string | null;
-      assigneeAgentId: string | null;
-      assigneeUserId: string | null;
-    }> = await dbOrTx
-      .select({
-        id: issues.id,
-        originId: issues.originId,
-        assigneeAgentId: issues.assigneeAgentId,
-        assigneeUserId: issues.assigneeUserId,
-      })
-      .from(issues)
-      .where(
-        and(
-          eq(issues.companyId, companyId),
-          eq(issues.originKind, BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND),
-          isNull(issues.hiddenAt),
-          notInArray(issues.status, BLOCKER_ATTENTION_OPEN_RECOVERY_TERMINAL_STATUSES),
-        ),
-      );
-    for (const row of recoveryRows) {
-      const parsed = parseIssueGraphLivenessIncidentKey(row.originId);
-      if (!parsed || parsed.companyId !== companyId) continue;
-      const waitingPath = explicitWaitingPathForOwner(ownerForExplicitWait(row));
-      setExplicitWaitingPath(row.id, waitingPath);
-      setExplicitWaitingPath(parsed.issueId, waitingPath);
-      setExplicitWaitingPath(parsed.leafIssueId, waitingPath);
+      const recoveryRows: Array<{
+        originId: string | null;
+        assigneeAgentId: string | null;
+        assigneeUserId: string | null;
+      }> = await dbOrTx
+        .select({
+          originId: issues.originId,
+          assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
+        })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.originKind, BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND),
+            isNull(issues.hiddenAt),
+            inArray(issues.originId, chunk),
+            notInArray(issues.status, BLOCKER_ATTENTION_OPEN_RECOVERY_TERMINAL_STATUSES),
+          ),
+        );
+      for (const row of recoveryRows) {
+        setExplicitWaitingPath(row.originId, explicitWaitingPathForOwner(ownerForExplicitWait(row)));
+      }
     }
   }
 
@@ -2716,23 +2666,6 @@ export function issueService(db: Db) {
         listIssueBlockerAttentionMap(db, companyId, withRuns),
         listIssueProductivityReviewMap(db, companyId, issueIds),
       ]);
-      const dispositionInputs: IssueExecutionDispositionInputNode[] = withRuns.map((row) => ({
-        id: row.id,
-        companyId: row.companyId,
-        status: row.status,
-        assigneeAgentId: row.assigneeAgentId,
-        assigneeUserId: row.assigneeUserId,
-        originKind: row.originKind ?? null,
-        executionRunId: row.executionRunId ?? null,
-        // executionState is intentionally omitted from the list select; the resolver rehydrates it.
-        blockedBy: includeBlockedBy ? blockedByMap.get(row.id) ?? [] : undefined,
-      }));
-      await backfillBlockedBySummaries(db, companyId, dispositionInputs);
-      const dispositionByIssueId = await listIssueExecutionDispositionsMap(
-        db,
-        companyId,
-        dispositionInputs,
-      );
 
       if (!contextUserId) {
         return withRuns.map((row) => {
@@ -2747,7 +2680,6 @@ export function issueService(db: Db) {
             ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
             lastActivityAt,
             ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
-            ...(dispositionByIssueId.has(row.id) ? { executionDisposition: dispositionByIssueId.get(row.id) } : {}),
             ...(productivityReviewByIssueId.has(row.id)
               ? { productivityReview: productivityReviewByIssueId.get(row.id) }
               : {}),
@@ -2769,7 +2701,6 @@ export function issueService(db: Db) {
           ...(includeBlockedBy ? { blockedBy: blockedByMap.get(row.id) ?? [] } : {}),
           lastActivityAt,
           ...(blockerAttentionByIssueId.has(row.id) ? { blockerAttention: blockerAttentionByIssueId.get(row.id) } : {}),
-          ...(dispositionByIssueId.has(row.id) ? { executionDisposition: dispositionByIssueId.get(row.id) } : {}),
           ...(productivityReviewByIssueId.has(row.id)
             ? { productivityReview: productivityReviewByIssueId.get(row.id) }
             : {}),
@@ -2922,16 +2853,6 @@ export function issueService(db: Db) {
       dbOrTx: any = db,
     ) => {
       return listIssueBlockerAttentionMap(dbOrTx, companyId, issueRows);
-    },
-
-    listExecutionDispositions: async (
-      companyId: string,
-      issueRows: IssueExecutionDispositionInputNode[],
-      dbOrTx: any = db,
-    ) => {
-      const inputs = issueRows.map((row) => ({ ...row }));
-      await backfillBlockedBySummaries(dbOrTx, companyId, inputs);
-      return listIssueExecutionDispositionsMap(dbOrTx, companyId, inputs);
     },
 
     listProductivityReviews: async (
@@ -3309,15 +3230,6 @@ export function issueService(db: Db) {
             tx,
           );
         }
-        await assertIssueTransitionAllowed({
-          db: tx,
-          issue,
-          source: "create",
-          statusTouched: true,
-          assigneeTouched: issueData.assigneeAgentId !== undefined || issueData.assigneeUserId !== undefined,
-          blockerTouched: blockedByIssueIds !== undefined,
-          executionStateTouched: issueData.executionState !== undefined,
-        });
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
       });
@@ -3471,15 +3383,6 @@ export function issueService(db: Db) {
             tx,
           );
         }
-        await assertIssueTransitionAllowed({
-          db: tx,
-          issue: updated,
-          source: "update",
-          statusTouched: issueData.status !== undefined,
-          assigneeTouched: issueData.assigneeAgentId !== undefined || issueData.assigneeUserId !== undefined,
-          blockerTouched: blockedByIssueIds !== undefined,
-          executionStateTouched: issueData.executionState !== undefined,
-        });
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;
       };

@@ -60,7 +60,7 @@ export interface LiveRunForIssue {
 
 export interface WatchdogDecisionInput {
   runId: string;
-  decision: "snooze" | "continue" | "dismissed_false_positive" | "cancel_run";
+  decision: "snooze" | "continue" | "dismissed_false_positive";
   evaluationIssueId?: string | null;
   reason?: string | null;
   snoozedUntil?: string | null;
