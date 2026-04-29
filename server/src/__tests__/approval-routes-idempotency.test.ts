@@ -260,48 +260,6 @@ describe("approval routes idempotent retries", () => {
     expect(mockApprovalService.reject).toHaveBeenCalledWith("approval-5", "user-1", "not now");
   });
 
-  it("wakes the requesting agent when an approval is rejected", async () => {
-    mockApprovalService.getById.mockResolvedValue({
-      id: "approval-7",
-      companyId: "company-1",
-      type: "request_board_approval",
-      status: "pending",
-      payload: {},
-      requestedByAgentId: "agent-1",
-    });
-    mockApprovalService.reject.mockResolvedValue({
-      approval: {
-        id: "approval-7",
-        companyId: "company-1",
-        type: "request_board_approval",
-        status: "rejected",
-        payload: {},
-        requestedByAgentId: "agent-1",
-      },
-      applied: true,
-    });
-    mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([{ id: "issue-1" }, { id: "issue-2" }]);
-
-    const res = await request(await createApp())
-      .post("/api/approvals/approval-7/reject")
-      .send({ decisionNote: "not approved" });
-
-    expect(res.status).toBe(200);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith("agent-1", expect.objectContaining({
-      reason: "approval_rejected",
-      payload: expect.objectContaining({
-        approvalId: "approval-7",
-        approvalStatus: "rejected",
-        issueId: "issue-1",
-        issueIds: ["issue-1", "issue-2"],
-      }),
-      contextSnapshot: expect.objectContaining({
-        wakeReason: "approval_rejected",
-        taskId: "issue-1",
-      }),
-    }));
-  });
-
   it("derives approval attribution from the authenticated actor on request revision", async () => {
     mockApprovalService.getById.mockResolvedValue({
       id: "approval-6",

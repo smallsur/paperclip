@@ -26,11 +26,8 @@ import {
   issueDocuments,
   heartbeatRunEvents,
   heartbeatRuns,
-  approvals,
-  issueApprovals,
   issueComments,
   issueRelations,
-  issueThreadInteractions,
   issues,
   issueWorkProducts,
   projects,
@@ -80,7 +77,6 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
-import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { parseIssueExecutionState } from "./issue-execution-policy.js";
 import {
   ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
@@ -113,10 +109,6 @@ import {
   readContinuationAttempt,
 } from "./recovery/index.js";
 import { isAutomaticRecoverySuppressedByPauseHold } from "./recovery/pause-hold-guard.js";
-import {
-  isLiveExplicitApprovalWaitingPath,
-  isLiveExplicitInteractionWaitingPath,
-} from "./recovery/explicit-waiting-paths.js";
 import { recoveryService } from "./recovery/service.js";
 import { productivityReviewService } from "./productivity-review.js";
 import { withAgentStartLock } from "./agent-start-lock.js";
@@ -135,8 +127,6 @@ import { environmentService } from "./environments.js";
 import { environmentRuntimeService } from "./environment-runtime.js";
 import { environmentRunOrchestrator } from "./environment-run-orchestrator.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
-
-const EXPLICIT_WAITING_INTERACTION_KINDS = ["request_confirmation", "ask_user_questions"];
 
 const MAX_LIVE_LOG_CHUNK_BYTES = 8 * 1024;
 const MAX_PERSISTED_LOG_CHUNK_CHARS = 64 * 1024;
@@ -2778,68 +2768,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     });
   }
 
-  async function hasExplicitIssueWait(issue: {
-    companyId: string;
-    id: string;
-    assigneeUserId?: string | null;
-    executionState?: Record<string, unknown> | null;
-  }) {
-    await issueThreadInteractionService(db).expireInvalidPendingRequestConfirmationsForIssue(
-      { id: issue.id, companyId: issue.companyId },
-      { agentId: null, userId: null },
-    );
-
-    const [interactionRows, approvalRows] = await Promise.all([
-      db
-        .select({
-          issueId: issueThreadInteractions.issueId,
-          companyId: issueThreadInteractions.companyId,
-          status: issueThreadInteractions.status,
-          createdByUserId: issueThreadInteractions.createdByUserId,
-          createdAt: issueThreadInteractions.createdAt,
-        })
-        .from(issueThreadInteractions)
-        .where(
-          and(
-            eq(issueThreadInteractions.companyId, issue.companyId),
-            eq(issueThreadInteractions.issueId, issue.id),
-            eq(issueThreadInteractions.status, "pending"),
-            inArray(issueThreadInteractions.kind, EXPLICIT_WAITING_INTERACTION_KINDS),
-          ),
-        )
-        .limit(5),
-      db
-        .select({
-          issueId: issueApprovals.issueId,
-          companyId: issueApprovals.companyId,
-          status: approvals.status,
-          requestedByUserId: approvals.requestedByUserId,
-          linkedByUserId: issueApprovals.linkedByUserId,
-          createdAt: approvals.createdAt,
-          updatedAt: approvals.updatedAt,
-          linkedAt: issueApprovals.createdAt,
-        })
-        .from(issueApprovals)
-        .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
-        .where(
-          and(
-            eq(issueApprovals.companyId, issue.companyId),
-            eq(issueApprovals.issueId, issue.id),
-            inArray(approvals.status, ["pending", "revision_requested"]),
-          ),
-        )
-        .limit(5),
-    ]);
-
-    return interactionRows.some((row) => isLiveExplicitInteractionWaitingPath(issue, row)) ||
-      approvalRows.some((row) => isLiveExplicitApprovalWaitingPath(issue, row));
-  }
-
   async function handleRunLivenessContinuation(run: typeof heartbeatRuns.$inferSelect) {
     const livenessState = run.livenessState as RunLivenessState | null;
-    if (!livenessState) return;
-    const hasProgressFollowup = livenessState === "advanced" && Boolean(run.nextAction?.trim());
-    if (livenessState !== "plan_only" && livenessState !== "empty_response" && !hasProgressFollowup) return;
+    if (livenessState !== "plan_only" && livenessState !== "empty_response") return;
 
     const context = parseObject(run.contextSnapshot);
     const issueId = readNonEmptyString(context.issueId);
@@ -2854,7 +2785,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           title: issues.title,
           status: issues.status,
           assigneeAgentId: issues.assigneeAgentId,
-          assigneeUserId: issues.assigneeUserId,
           executionState: issues.executionState,
           projectId: issues.projectId,
         })
@@ -2880,14 +2810,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         })
         : null;
     if (issue) {
-      if (await hasExplicitIssueWait(issue)) {
-        await setRunStatus(run.id, run.status, {
-          livenessReason:
-            `${run.livenessReason ?? "Run ended without concrete progress"}; continuation suppressed by explicit interaction or approval wait`,
-        });
-        return;
-      }
-
       const productivityHold = await productivityReviews.isProductivityReviewContinuationHoldActive({
         companyId: issue.companyId,
         issueId: issue.id,
@@ -2906,14 +2828,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           reviewIssueId: productivityHold.reviewIssueId,
           trigger: productivityHold.trigger,
           reason: productivityHold.reason,
-        });
-        return;
-      }
-
-      if (await isAutomaticRecoverySuppressedByPauseHold(db, issue.companyId, issue.id, treeControlSvc)) {
-        await setRunStatus(run.id, run.status, {
-          livenessReason:
-            `${run.livenessReason ?? "Run ended without concrete progress"}; continuation suppressed by active pause hold`,
         });
         return;
       }
@@ -3737,88 +3651,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
               scheduledRetryReason: cancelled.scheduledRetryReason,
               previousRetryAgentId: cancelled.agentId,
               currentAssigneeAgentId: issue.assigneeAgentId,
-            },
-          });
-          continue;
-        }
-
-        const activePauseHold = await treeControlSvc.getActivePauseHoldGate(dueRun.companyId, dueRunIssueId);
-        if (activePauseHold) {
-          const reason = "Cancelled because issue is held by an active subtree pause hold";
-          const cancelled = await db
-            .update(heartbeatRuns)
-            .set({
-              status: "cancelled",
-              finishedAt: now,
-              error: reason,
-              errorCode: "issue_paused",
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(heartbeatRuns.id, dueRun.id),
-                eq(heartbeatRuns.status, "scheduled_retry"),
-                lte(heartbeatRuns.scheduledRetryAt, now),
-              ),
-            )
-            .returning()
-            .then((rows) => rows[0] ?? null);
-
-          if (!cancelled) continue;
-
-          if (cancelled.wakeupRequestId) {
-            await db
-              .update(agentWakeupRequests)
-              .set({
-                status: "cancelled",
-                finishedAt: now,
-                error: reason,
-                updatedAt: now,
-              })
-              .where(eq(agentWakeupRequests.id, cancelled.wakeupRequestId));
-          }
-
-          if (issue && issue.executionRunId === cancelled.id) {
-            await db
-              .update(issues)
-              .set({
-                executionRunId: null,
-                executionAgentNameKey: null,
-                executionLockedAt: null,
-                updatedAt: now,
-              })
-              .where(and(eq(issues.id, issue.id), eq(issues.executionRunId, cancelled.id)));
-          }
-
-          await appendRunEvent(cancelled, await nextRunEventSeq(cancelled.id), {
-            eventType: "lifecycle",
-            stream: "system",
-            level: "warn",
-            message: "Scheduled retry cancelled because issue is held by an active subtree pause hold",
-            payload: {
-              issueId: dueRunIssueId,
-              holdId: activePauseHold.holdId,
-              rootIssueId: activePauseHold.rootIssueId,
-              scheduledRetryAttempt: cancelled.scheduledRetryAttempt,
-              scheduledRetryAt: cancelled.scheduledRetryAt ? new Date(cancelled.scheduledRetryAt).toISOString() : null,
-              scheduledRetryReason: cancelled.scheduledRetryReason,
-            },
-          });
-
-          await logActivity(db, {
-            companyId: cancelled.companyId,
-            actorType: "system",
-            actorId: "system",
-            agentId: cancelled.agentId,
-            runId: cancelled.id,
-            action: "issue.tree_hold_run_interrupted",
-            entityType: "heartbeat_run",
-            entityId: cancelled.id,
-            details: {
-              issueId: dueRunIssueId,
-              holdId: activePauseHold.holdId,
-              rootIssueId: activePauseHold.rootIssueId,
-              source: "heartbeat.promote_due_scheduled_retries",
             },
           });
           continue;
@@ -7662,8 +7494,6 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     reportRunActivity: clearDetachedRunWarning,
 
     reapOrphanedRuns,
-
-    handleRunLivenessContinuationForTest: handleRunLivenessContinuation,
 
     promoteDueScheduledRetries,
 

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { IssueBlockerAttention } from "@paperclipai/shared";
-import { AlertTriangle } from "lucide-react";
 import { cn } from "../lib/utils";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -49,26 +48,6 @@ function blockedAttentionLabel(blockerAttention: IssueBlockerAttention | null | 
     return `Blocked · ${count} reviews stalled with no clear next step`;
   }
 
-  if (blockerAttention.state === "recovery_needed") {
-    const leaf = blockerAttention.sampleBlockerIdentifier;
-    if (blockerAttention.reason === "productive_run_stopped") {
-      return leaf
-        ? `Blocked · liveness break at ${leaf} · productive run stopped without continuation`
-        : "Blocked · liveness break · productive run stopped without continuation";
-    }
-    if (blockerAttention.reason === "continuation_exhausted") {
-      return leaf
-        ? `Blocked · liveness break at ${leaf} · automatic continuation exhausted`
-        : "Blocked · liveness break · automatic continuation exhausted";
-    }
-    if (blockerAttention.reason === "continuation_suppressed") {
-      return leaf
-        ? `Blocked · liveness break at ${leaf} · automatic continuation suppressed`
-        : "Blocked · liveness break · automatic continuation suppressed";
-    }
-    return "Blocked · liveness break needs recovery";
-  }
-
   if (blockerAttention.reason === "attention_required") {
     const count = blockerAttention.unresolvedBlockerCount;
     return `Blocked · ${count} unresolved ${count === 1 ? "blocker needs" : "blockers need"} attention`;
@@ -81,25 +60,18 @@ export function StatusIcon({ status, blockerAttention, onChange, className, show
   const [open, setOpen] = useState(false);
   const isCoveredBlocked = status === "blocked" && blockerAttention?.state === "covered";
   const isStalledBlocked = status === "blocked" && blockerAttention?.state === "stalled";
-  const isRecoveryNeeded = blockerAttention?.state === "recovery_needed";
   const colorClass = isCoveredBlocked
     ? "text-cyan-600 border-cyan-600 dark:text-cyan-400 dark:border-cyan-400"
     : isStalledBlocked
       ? "text-amber-600 border-amber-600 dark:text-amber-400 dark:border-amber-400"
-      : isRecoveryNeeded
-        ? "text-red-600 border-red-600 dark:text-red-400 dark:border-red-400"
-        : issueStatusIcon[status] ?? issueStatusIconDefault;
+      : issueStatusIcon[status] ?? issueStatusIconDefault;
   const isDone = status === "done";
-  const recoveryAriaLabel = isRecoveryNeeded ? blockedAttentionLabel(blockerAttention) : null;
-  const ariaLabel = recoveryAriaLabel
-    ?? (status === "blocked" ? blockedAttentionLabel(blockerAttention) : statusLabel(status));
+  const ariaLabel = status === "blocked" ? blockedAttentionLabel(blockerAttention) : statusLabel(status);
   const blockerAttentionState = isCoveredBlocked
     ? "covered"
     : isStalledBlocked
       ? "stalled"
-      : isRecoveryNeeded
-        ? "recovery_needed"
-        : undefined;
+      : undefined;
 
   const circle = (
     <span
@@ -121,14 +93,6 @@ export function StatusIcon({ status, blockerAttention, onChange, className, show
       )}
       {isStalledBlocked && (
         <span className="absolute inset-0 m-auto h-1.5 w-1.5 rounded-full bg-current" />
-      )}
-      {isRecoveryNeeded && (
-        <AlertTriangle
-          aria-hidden
-          className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-background text-rose-500 dark:text-rose-300"
-          strokeWidth={3}
-          fill="currentColor"
-        />
       )}
     </span>
   );

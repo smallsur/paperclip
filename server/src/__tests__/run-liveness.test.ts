@@ -58,57 +58,6 @@ describe("run liveness classifier", () => {
     expect(classification.lastUsefulActionAt).toBe(latestEvidenceAt);
   });
 
-  it("preserves runnable next actions when concrete progress still leaves non-terminal work", () => {
-    const classification = classifyRunLiveness({
-      ...baseInput,
-      resultJson: {
-        summary: "Updated the service and tests.\nNext action: run pnpm vitest server/src/__tests__/run-liveness.test.ts.",
-      },
-      evidence: {
-        issueCommentsCreated: 1,
-        latestEvidenceAt: new Date("2026-04-18T12:00:00Z"),
-      },
-    });
-
-    expect(classification.livenessState).toBe("advanced");
-    expect(classification.actionability).toBe("runnable");
-    expect(classification.nextAction).toBe("run pnpm vitest server/src/__tests__/run-liveness.test.ts.");
-  });
-
-  it("routes concrete progress with manager-review next action to visible follow-up", () => {
-    const classification = classifyRunLiveness({
-      ...baseInput,
-      resultJson: {
-        summary: "Prepared the release notes.\nNext action: deploy to production and verify live traffic.",
-      },
-      evidence: {
-        issueCommentsCreated: 1,
-        latestEvidenceAt: new Date("2026-04-18T12:00:00Z"),
-      },
-    });
-
-    expect(classification.livenessState).toBe("needs_followup");
-    expect(classification.actionability).toBe("manager_review");
-    expect(classification.nextAction).toBe("deploy to production and verify live traffic.");
-  });
-
-  it("routes concrete progress with ambiguous next action to visible follow-up", () => {
-    const classification = classifyRunLiveness({
-      ...baseInput,
-      resultJson: {
-        summary: "Captured the current state.\nNext action: decide what to do with the remaining uncertainty.",
-      },
-      evidence: {
-        issueCommentsCreated: 1,
-        latestEvidenceAt: new Date("2026-04-18T12:00:00Z"),
-      },
-    });
-
-    expect(classification.livenessState).toBe("needs_followup");
-    expect(classification.actionability).toBe("unknown");
-    expect(classification.nextAction).toBe("decide what to do with the remaining uncertainty.");
-  });
-
   it("does not treat workspace operations alone as concrete progress", () => {
     const classification = classifyRunLiveness({
       ...baseInput,
@@ -155,22 +104,6 @@ describe("run liveness classifier", () => {
     });
 
     expect(classification.livenessState).toBe("advanced");
-  });
-
-  it("keeps in-review work on the explicit waiting path", () => {
-    const classification = classifyRunLiveness({
-      ...baseInput,
-      issue: {
-        ...baseInput.issue,
-        status: "in_review",
-      },
-      resultJson: {
-        summary: "Next action: wait for manager review.",
-      },
-    });
-
-    expect(classification.livenessState).toBe("needs_followup");
-    expect(classification.nextAction).toBe("wait for manager review.");
   });
 
   it("classifies done issues as completed", () => {

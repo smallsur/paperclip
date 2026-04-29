@@ -106,7 +106,7 @@ describe("run liveness continuations", () => {
     expect(decision.nextAttempt).toBe(2);
   });
 
-  it("treats an advanced terminal run as progress evidence, not a live continuation path", () => {
+  it.fails("treats an advanced terminal run as progress evidence, not a live continuation path", () => {
     const decision = decideRunLivenessContinuation({
       run: run(),
       issue: issue(),

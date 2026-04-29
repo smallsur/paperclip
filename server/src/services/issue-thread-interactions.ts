@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   documents,
@@ -67,45 +67,6 @@ type IssueResolutionContext = {
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
 };
-
-function isAgentAuthoredWaitingInteraction(input: CreateIssueThreadInteraction, actor: InteractionActor) {
-  return Boolean(actor.agentId) && (input.kind === "request_confirmation" || input.kind === "ask_user_questions");
-}
-
-async function moveIssueToReviewForAgentWaitingInteraction(
-  db: Db,
-  issue: { id: string; companyId: string },
-  input: CreateIssueThreadInteraction,
-  actor: InteractionActor,
-) {
-  if (!actor.agentId || !isAgentAuthoredWaitingInteraction(input, actor)) return null;
-
-  const issueContext = await db
-    .select({
-      id: issues.id,
-      companyId: issues.companyId,
-      status: issues.status,
-      assigneeAgentId: issues.assigneeAgentId,
-      assigneeUserId: issues.assigneeUserId,
-    })
-    .from(issues)
-    .where(eq(issues.id, issue.id))
-    .then((rows: IssueResolutionContext[]) => rows[0] ?? null);
-
-  if (!issueContext || issueContext.companyId !== issue.companyId) {
-    throw notFound("Issue not found");
-  }
-  if (issueContext.status !== "todo" && issueContext.status !== "in_progress") return null;
-  if (issueContext.assigneeUserId) return null;
-
-  return issueService(db).update(issue.id, {
-    status: "in_review",
-    assigneeAgentId: issueContext.assigneeAgentId ?? actor.agentId,
-    assigneeUserId: null,
-    actorAgentId: actor.agentId ?? null,
-    actorUserId: actor.userId ?? null,
-  });
-}
 
 function isIssueThreadInteractionIdempotencyConflict(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
@@ -463,55 +424,6 @@ async function expireStaleRequestConfirmationTarget(db: Db | any, args: {
   return hydrateInteraction(updated);
 }
 
-async function expireRequestConfirmationSupersededByLatestUserComment(db: Db | any, args: {
-  row: IssueThreadInteractionRow;
-  actor: InteractionActor;
-}): Promise<IssueThreadInteraction | null> {
-  if (args.row.kind !== "request_confirmation" || args.row.status !== "pending") return null;
-  const interaction = hydrateInteraction(args.row) as RequestConfirmationInteraction;
-  if (interaction.payload.supersedeOnUserComment !== true) return null;
-
-  const [comment] = await db
-    .select({ id: issueComments.id })
-    .from(issueComments)
-    .where(and(
-      eq(issueComments.companyId, args.row.companyId),
-      eq(issueComments.issueId, args.row.issueId),
-      gt(issueComments.createdAt, args.row.createdAt),
-      sql`${issueComments.authorUserId} is not null`,
-    ))
-    .orderBy(asc(issueComments.createdAt))
-    .limit(1);
-  if (!comment) return null;
-
-  const now = new Date();
-  const [updated] = await db
-    .update(issueThreadInteractions)
-    .set({
-      status: "expired",
-      result: {
-        version: 1,
-        outcome: "superseded_by_comment",
-        commentId: comment.id,
-      },
-      resolvedByAgentId: args.actor.agentId ?? null,
-      resolvedByUserId: args.actor.userId ?? null,
-      resolvedAt: now,
-      updatedAt: now,
-    })
-    .where(and(
-      eq(issueThreadInteractions.id, args.row.id),
-      eq(issueThreadInteractions.status, "pending"),
-    ))
-    .returning();
-
-  if (!updated) {
-    throw conflict("Interaction has already been resolved");
-  }
-  await touchIssue(db, args.row.issueId);
-  return hydrateInteraction(updated);
-}
-
 export function issueThreadInteractionService(db: Db) {
   async function getIdempotentInteraction(args: {
     issueId: string;
@@ -728,7 +640,6 @@ export function issueThreadInteractionService(db: Db) {
               idempotencyKey: data.idempotencyKey,
             });
           }
-          await moveIssueToReviewForAgentWaitingInteraction(db, issue, data, actor);
           return hydrateInteraction(existing);
         }
       }
@@ -806,7 +717,6 @@ export function issueThreadInteractionService(db: Db) {
         return hydrateInteraction(existing);
       }
 
-      await moveIssueToReviewForAgentWaitingInteraction(db, issue, data, actor);
       await touchIssue(db, issue.id);
       return hydrateInteraction(created);
     },
@@ -1178,33 +1088,6 @@ export function issueThreadInteractionService(db: Db) {
 
       if (expired.length > 0) {
         await touchIssue(db, issue.id);
-      }
-      return expired;
-    },
-
-    expireInvalidPendingRequestConfirmationsForIssue: async (
-      issue: { id: string; companyId: string },
-      actor: InteractionActor,
-    ) => {
-      const rows = await db
-        .select()
-        .from(issueThreadInteractions)
-        .where(and(
-          eq(issueThreadInteractions.companyId, issue.companyId),
-          eq(issueThreadInteractions.issueId, issue.id),
-          eq(issueThreadInteractions.kind, "request_confirmation"),
-          eq(issueThreadInteractions.status, "pending"),
-        ));
-
-      const expired: IssueThreadInteraction[] = [];
-      for (const row of rows) {
-        const staleTarget = await expireStaleRequestConfirmationTarget(db, { row, actor });
-        if (staleTarget) {
-          expired.push(staleTarget);
-          continue;
-        }
-        const superseded = await expireRequestConfirmationSupersededByLatestUserComment(db, { row, actor });
-        if (superseded) expired.push(superseded);
       }
       return expired;
     },

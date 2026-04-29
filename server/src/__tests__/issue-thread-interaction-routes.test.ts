@@ -49,13 +49,10 @@ function registerModuleMocks() {
       })),
     }),
     clampIssueListLimit: (value: number) => value,
-    companyService: () => ({}),
     ISSUE_LIST_DEFAULT_LIMIT: 500,
     ISSUE_LIST_MAX_LIMIT: 1000,
     documentService: () => ({}),
-    environmentService: () => ({}),
     executionWorkspaceService: () => ({}),
-    executionWorkspaceServiceDirect: () => ({}),
     feedbackService: () => ({
       listIssueVotesForUser: vi.fn(async () => []),
       saveIssueVote: vi.fn(async () => ({ vote: null, consentEnabledNow: false, sharingEnabled: false })),
@@ -571,108 +568,6 @@ describe.sequential("issue thread interaction routes", () => {
 
     expect(res.status).toBe(200);
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
-  });
-
-  it("wakes the current assignee when a rejected confirmation uses wake-assignee continuation", async () => {
-    mockInteractionService.rejectInteraction.mockResolvedValueOnce({
-      id: "interaction-7",
-      companyId: "company-1",
-      issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      kind: "request_confirmation",
-      status: "rejected",
-      continuationPolicy: "wake_assignee",
-      idempotencyKey: null,
-      sourceCommentId: null,
-      sourceRunId: "run-7",
-      payload: {
-        version: 1,
-        prompt: "Apply this plan?",
-      },
-      result: {
-        version: 1,
-        outcome: "rejected",
-        reason: "Needs changes",
-      },
-      createdAt: "2026-04-20T12:00:00.000Z",
-      updatedAt: "2026-04-20T12:05:00.000Z",
-      resolvedAt: "2026-04-20T12:05:00.000Z",
-    });
-    const app = await createApp();
-
-    const res = await request(app)
-      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-7/reject")
-      .send({ reason: "Needs changes" });
-
-    expect(res.status).toBe(200);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
-      ASSIGNEE_AGENT_ID,
-      expect.objectContaining({
-        reason: "issue_commented",
-        payload: expect.objectContaining({
-          interactionId: "interaction-7",
-          interactionKind: "request_confirmation",
-          interactionStatus: "rejected",
-        }),
-      }),
-    );
-  });
-
-  it("wakes the current assignee when an accepted confirmation expires because its target is stale", async () => {
-    mockInteractionService.acceptInteraction.mockResolvedValueOnce({
-      interaction: {
-        id: "interaction-6",
-        companyId: "company-1",
-        issueId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        kind: "request_confirmation",
-        status: "expired",
-        continuationPolicy: "wake_assignee_on_accept",
-        idempotencyKey: null,
-        sourceCommentId: null,
-        sourceRunId: "run-6",
-        payload: {
-          version: 1,
-          prompt: "Approve this plan?",
-          target: {
-            type: "issue_document",
-            key: "plan",
-            revisionId: "old-revision",
-          },
-        },
-        result: {
-          version: 1,
-          outcome: "stale_target",
-          staleTarget: {
-            type: "issue_document",
-            key: "plan",
-            revisionId: "old-revision",
-          },
-        },
-        createdAt: "2026-04-20T12:00:00.000Z",
-        updatedAt: "2026-04-20T12:05:00.000Z",
-        resolvedAt: "2026-04-20T12:05:00.000Z",
-      },
-      createdIssues: [],
-    });
-    const app = await createApp();
-
-    const res = await request(app)
-      .post("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/interactions/interaction-6/accept")
-      .send({});
-
-    expect(res.status).toBe(200);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(1);
-    expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
-      ASSIGNEE_AGENT_ID,
-      expect.objectContaining({
-        reason: "issue_commented",
-        payload: expect.objectContaining({
-          interactionId: "interaction-6",
-          interactionKind: "request_confirmation",
-          interactionStatus: "expired",
-        }),
-      }),
-    );
   });
 
   it("does not emit an accept-only continuation wake for rejected suggested tasks", async () => {

@@ -849,8 +849,6 @@ describe("IssueDetail", () => {
         attentionBlockerCount: 0,
         sampleBlockerIdentifier: "PAP-2",
         sampleStalledBlockerIdentifier: null,
-        nextActionOwner: null,
-        nextActionHint: null,
       },
     }));
 

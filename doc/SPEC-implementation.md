@@ -434,7 +434,6 @@ Side effects:
 V1 non-terminal liveness rule:
 
 - agent-owned `todo`, `in_progress`, `in_review`, and `blocked` issues must have a live execution path, an explicit waiting path, or an explicit recovery path
-- pending issue-thread interactions and linked pending approvals are explicit waiting paths for any non-terminal status when they name the next responder/action and remain fresh or tied to a resolvable human owner; stale agent-authored or ownerless waits must fall back to stalled/recovery handling
 - `in_review` is healthy only when a typed execution participant, pending issue-thread interaction or approval, user owner, active run, queued wake, or explicit recovery issue owns the next action
 - a blocked chain is covered only when each unresolved leaf issue is live or explicitly waiting
 - when Paperclip cannot safely infer the next action, it surfaces the problem through visible blocked/recovery work instead of silently completing or reassigning work

@@ -8,14 +8,13 @@ export const RUN_LIVENESS_CONTINUATION_REASON = RECOVERY_REASON_KINDS.runLivenes
 export const DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS = 2;
 
 const ACTIONABLE_LIVENESS_STATES = new Set<RunLivenessState>(["plan_only", "empty_response"]);
-const PROGRESS_WITH_FOLLOWUP_LIVENESS_STATES = new Set<RunLivenessState>(["advanced"]);
 const CONTINUATION_ACTIVE_ISSUE_STATUSES = new Set(["todo", "in_progress"]);
 // A prior adapter error should not permanently suppress bounded liveness
 // continuations; the max-attempt/idempotency guards prevent unbounded retries.
 const CONTINUATION_AGENT_STATUSES = new Set(["active", "idle", "running", "error"]);
 const IDEMPOTENT_WAKE_STATUSES = ["queued", "deferred_issue_execution", "completed"];
 
-type HeartbeatRunRow = Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId" | "agentId" | "continuationAttempt">;
+type HeartbeatRunRow = typeof heartbeatRuns.$inferSelect;
 type IssueRow = Pick<
   typeof issues.$inferSelect,
   "id" | "companyId" | "identifier" | "title" | "status" | "assigneeAgentId" | "executionState" | "projectId"
@@ -105,15 +104,7 @@ export function decideRunLivenessContinuation(input: {
   } = input;
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_LIVENESS_CONTINUATION_ATTEMPTS;
 
-  if (!livenessState) {
-    return { kind: "skip", reason: "liveness state is not actionable for continuation" };
-  }
-
-  const hasExplicitRunnableFollowup = Boolean(nextAction?.trim());
-  const livenessCanContinue =
-    ACTIONABLE_LIVENESS_STATES.has(livenessState) ||
-    PROGRESS_WITH_FOLLOWUP_LIVENESS_STATES.has(livenessState) && hasExplicitRunnableFollowup;
-  if (!livenessCanContinue) {
+  if (!livenessState || !ACTIONABLE_LIVENESS_STATES.has(livenessState)) {
     return { kind: "skip", reason: "liveness state is not actionable for continuation" };
   }
   if (!issue) return { kind: "skip", reason: "issue not found" };

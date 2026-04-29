@@ -18,8 +18,6 @@ describe("StatusIcon", () => {
           attentionBlockerCount: 0,
           sampleBlockerIdentifier: "PAP-2",
           sampleStalledBlockerIdentifier: null,
-          nextActionOwner: null,
-          nextActionHint: null,
         }}
       />,
     );
@@ -46,8 +44,6 @@ describe("StatusIcon", () => {
           attentionBlockerCount: 0,
           sampleBlockerIdentifier: null,
           sampleStalledBlockerIdentifier: null,
-          nextActionOwner: null,
-          nextActionHint: null,
         }}
       />,
     );
@@ -70,8 +66,6 @@ describe("StatusIcon", () => {
           attentionBlockerCount: 1,
           sampleBlockerIdentifier: "PAP-2",
           sampleStalledBlockerIdentifier: null,
-          nextActionOwner: null,
-          nextActionHint: null,
         }}
       />,
     );
@@ -80,53 +74,6 @@ describe("StatusIcon", () => {
     expect(html).toContain('aria-label="Blocked · 1 unresolved blocker needs attention"');
     expect(html).toContain("border-red-600");
     expect(html).not.toContain("border-dashed");
-  });
-
-  it("renders recovery_needed leaves with the alert overlay and liveness-break tooltip", () => {
-    const html = renderToStaticMarkup(
-      <StatusIcon
-        status="blocked"
-        blockerAttention={{
-          state: "recovery_needed",
-          reason: "productive_run_stopped",
-          unresolvedBlockerCount: 1,
-          coveredBlockerCount: 0,
-          stalledBlockerCount: 0,
-          attentionBlockerCount: 0,
-          sampleBlockerIdentifier: "PAP-2642",
-          sampleStalledBlockerIdentifier: null,
-          nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-          nextActionHint: "wake_to_continue",
-        }}
-      />,
-    );
-
-    expect(html).toContain('data-blocker-attention-state="recovery_needed"');
-    expect(html).toContain('aria-label="Blocked · liveness break at PAP-2642 · productive run stopped without continuation"');
-    expect(html).toContain("border-red-600");
-    expect(html).toContain("text-rose-500");
-  });
-
-  it("uses continuation_exhausted copy when the chain ran out of automatic continuations", () => {
-    const html = renderToStaticMarkup(
-      <StatusIcon
-        status="blocked"
-        blockerAttention={{
-          state: "recovery_needed",
-          reason: "continuation_exhausted",
-          unresolvedBlockerCount: 1,
-          coveredBlockerCount: 0,
-          stalledBlockerCount: 0,
-          attentionBlockerCount: 0,
-          sampleBlockerIdentifier: "PAP-2642",
-          sampleStalledBlockerIdentifier: null,
-          nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-          nextActionHint: "create_recovery_issue",
-        }}
-      />,
-    );
-
-    expect(html).toContain('aria-label="Blocked · liveness break at PAP-2642 · automatic continuation exhausted"');
   });
 
   it("renders stalled review chains with amber visual and stalled-leaf copy", () => {
@@ -142,8 +89,6 @@ describe("StatusIcon", () => {
           attentionBlockerCount: 0,
           sampleBlockerIdentifier: "PAP-2279",
           sampleStalledBlockerIdentifier: "PAP-2279",
-          nextActionOwner: null,
-          nextActionHint: null,
         }}
       />,
     );

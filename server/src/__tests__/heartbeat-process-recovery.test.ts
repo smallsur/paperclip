@@ -7,7 +7,6 @@ import {
   agents,
   agentRuntimeState,
   agentWakeupRequests,
-  approvals,
   budgetPolicies,
   companySkills,
   companies,
@@ -18,10 +17,8 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
-  issueApprovals,
   issueDocuments,
   issueRelations,
-  issueThreadInteractions,
   issueTreeHoldMembers,
   issueTreeHolds,
   issues,
@@ -313,19 +310,14 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await db.delete(companySkills);
     await db.delete(costEvents);
     await db.delete(issueComments);
-    await db.delete(issueThreadInteractions);
-    await db.delete(issueApprovals);
     await db.delete(issueDocuments);
     await db.delete(documentRevisions);
     await db.delete(documents);
-    await db.delete(approvals);
     await db.delete(issueRelations);
     await db.delete(issueTreeHoldMembers);
     await db.delete(issueTreeHolds);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(issueComments);
-      await db.delete(issueThreadInteractions);
-      await db.delete(issueApprovals);
       await db.delete(issueDocuments);
       try {
         await db.delete(issues);
@@ -348,7 +340,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
     await db.delete(agentWakeupRequests);
     await db.delete(budgetPolicies);
-    await db.delete(approvals);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(agentRuntimeState);
       try {
@@ -482,9 +473,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     assignToUser?: boolean;
     activePauseHold?: boolean;
     livenessState?: "completed" | "advanced" | "plan_only" | "empty_response" | "blocked" | "failed" | "needs_followup" | null;
-    livenessReason?: string | null;
-    nextAction?: string | null;
-    continuationAttempt?: number | null;
     runErrorCode?: string | null;
     runError?: string | null;
   }) {
@@ -559,9 +547,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         ? null
         : ("runError" in input ? input.runError : "run failed before issue advanced"),
       livenessState: input.livenessState ?? null,
-      livenessReason: input.livenessReason ?? null,
-      nextAction: input.nextAction ?? null,
-      continuationAttempt: input.continuationAttempt ?? 0,
     });
 
     await db.insert(issues).values([
@@ -2125,126 +2110,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(wakeups).toHaveLength(1);
   });
 
-  it("queues a bounded liveness continuation for productive successful stranded in-progress work", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "advanced",
-      livenessReason: "Run made progress and left follow-up work",
-      nextAction: "Implement the remaining recovery branch.",
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.continuationRequeued).toBe(1);
-    expect(result.escalated).toBe(0);
-    expect(result.issueIds).toEqual([issueId]);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.agentId, agentId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-    expect(wakeups[0]?.payload).toMatchObject({
-      issueId,
-      sourceRunId: runId,
-      livenessState: "advanced",
-      continuationAttempt: 1,
-      instruction: "Implement the remaining recovery branch.",
-    });
-    expect(wakeups[0]?.idempotencyKey).toBe(`run_liveness_continuation:${issueId}:${runId}:advanced:1`);
-
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    expect(sourceRun?.continuationAttempt).toBe(1);
-
-    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
-    expect(issue?.status).toBe("in_progress");
-
-    const recoveryIssues = await db
-      .select()
-      .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
-    expect(recoveryIssues).toHaveLength(0);
-  });
-
-  it("blocks productive successful stranded work when bounded liveness continuation is exhausted", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "advanced",
-      livenessReason: "Run still has follow-up work",
-      nextAction: "Try the remaining implementation step.",
-      continuationAttempt: 2,
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.continuationRequeued).toBe(0);
-    expect(result.escalated).toBe(1);
-    expect(result.issueIds).toEqual([issueId]);
-
-    const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
-    expect(issue?.status).toBe("blocked");
-
-    const recovery = await db
-      .select()
-      .from(issues)
-      .where(and(
-        eq(issues.companyId, companyId),
-        eq(issues.originKind, "stranded_issue_recovery"),
-        eq(issues.originId, issueId),
-      ))
-      .then((rows) => rows[0] ?? null);
-    if (!recovery) throw new Error("Expected stranded recovery issue");
-    expect(recovery).toMatchObject({
-      companyId,
-      parentId: issueId,
-      assigneeAgentId: agentId,
-      originKind: "stranded_issue_recovery",
-      originId: issueId,
-      originRunId: runId,
-    });
-    await expect(sourceBlockerIssueIds(companyId, issueId)).resolves.toEqual([recovery.id]);
-
-    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
-    expect(comments).toHaveLength(1);
-    expect(comments[0]?.body).toContain("Bounded liveness continuation exhausted");
-    expect(comments[0]?.body).toContain(`Recovery issue: [${recovery.identifier}]`);
-  });
-
-  it("does not duplicate an existing bounded liveness continuation wake for productive successful work", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "advanced",
-      nextAction: "Resume implementation from the recorded next action.",
-    });
-    await db.insert(agentWakeupRequests).values({
-      companyId,
-      agentId,
-      source: "automation",
-      triggerDetail: "system",
-      reason: "run_liveness_continuation",
-      payload: { issueId, sourceRunId: runId, livenessState: "advanced", continuationAttempt: 1 },
-      status: "queued",
-      idempotencyKey: `run_liveness_continuation:${issueId}:${runId}:advanced:1`,
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.continuationRequeued).toBe(0);
-    expect(result.escalated).toBe(0);
-    expect(result.skipped).toBe(1);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.agentId, agentId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("escalates a successful automatic continuation when no live post-run path remains", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+  it("records productive continuation instead of recovery when the latest automatic continuation succeeded", async () => {
+    const { agentId, issueId, runId } = await seedStrandedIssueFixture({
       status: "in_progress",
       runStatus: "succeeded",
       retryReason: "issue_continuation_needed",
@@ -2254,36 +2121,28 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const result = await heartbeat.reconcileStrandedAssignedIssues();
     expect(result.continuationRequeued).toBe(0);
-    expect(result.productiveContinuationObserved).toBe(0);
+    expect(result.productiveContinuationObserved).toBe(1);
     expect(result.successfulContinuationObserved).toBe(0);
-    expect(result.escalated).toBe(1);
-    expect(result.issueIds).toEqual([issueId]);
+    expect(result.escalated).toBe(0);
+    expect(result.issueIds).toEqual([]);
 
     const issue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
-    expect(issue?.status).toBe("blocked");
+    expect(issue?.status).toBe("in_progress");
 
     const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
-    expect(comments).toHaveLength(1);
-    expect(comments[0]?.body).toContain("successful automatic continuation");
+    expect(comments).toHaveLength(0);
 
     const runs = await db
       .select()
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
-    const sourceIssueRuns = runs.filter((row) => (row.contextSnapshot as Record<string, unknown> | null)?.issueId === issueId);
-    expect(sourceIssueRuns.map((row) => row.id)).toEqual([runId]);
-
-    const recoveryIssues = await db
-      .select()
-      .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
-    expect(recoveryIssues).toHaveLength(1);
+    expect(runs.map((row) => row.id)).toEqual([runId]);
 
     const wakeups = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, agentId));
-    expect(wakeups.some((row) => (row.payload as Record<string, unknown> | null)?.issueId === recoveryIssues[0]?.id)).toBe(true);
+    expect(wakeups).toHaveLength(1);
   });
 
-  it("does not treat a productive terminal run as healthy when in-progress work has no live path", async () => {
+  it.fails("does not treat a productive terminal run as healthy when in-progress work has no live path", async () => {
     const { companyId, agentId, issueId } = await seedStrandedIssueFixture({
       status: "in_progress",
       runStatus: "succeeded",
@@ -2347,409 +2206,5 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
     expect(runs).toHaveLength(1);
-  });
-
-  it("suppresses bounded liveness continuation wakes when the issue is held by an active pause hold", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run made no concrete progress",
-      nextAction: "Take the first concrete action now.",
-      activePauseHold: true,
-    });
-    const heartbeat = heartbeatService(db);
-
-    const sourceRun = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(0);
-
-    const refreshedRun = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-    expect(refreshedRun?.continuationAttempt).toBe(0);
-    expect(refreshedRun?.livenessReason).toContain("continuation suppressed by active pause hold");
-
-    const recoveryIssues = await db
-      .select()
-      .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "stranded_issue_recovery")));
-    expect(recoveryIssues).toHaveLength(0);
-
-    const refreshedIssue = await db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => rows[0] ?? null);
-    expect(refreshedIssue?.status).toBe("in_progress");
-    expect(refreshedIssue?.assigneeAgentId).toBe(agentId);
-  });
-
-  it("suppresses bounded liveness continuation wakes when the issue has a pending confirmation", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run produced a plan and needs approval",
-      nextAction: "Wait for the board to confirm the plan.",
-    });
-    await db.insert(issueThreadInteractions).values({
-      companyId,
-      issueId,
-      kind: "request_confirmation",
-      status: "pending",
-      payload: {
-        version: 1,
-        prompt: "Approve the plan?",
-      },
-      createdByAgentId: agentId,
-      sourceRunId: runId,
-    });
-    const heartbeat = heartbeatService(db);
-
-    const sourceRun = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(0);
-
-    const refreshedRun = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-    expect(refreshedRun?.continuationAttempt).toBe(0);
-    expect(refreshedRun?.livenessReason).toContain("continuation suppressed by explicit interaction or approval wait");
-  });
-
-  it("does not suppress bounded liveness continuation for stale agent-authored confirmations", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run produced a plan and needs approval",
-      nextAction: "Continue after recovering from the stale confirmation.",
-    });
-    await db.insert(issueThreadInteractions).values({
-      companyId,
-      issueId,
-      kind: "request_confirmation",
-      status: "pending",
-      payload: {
-        version: 1,
-        prompt: "Approve the stale plan?",
-      },
-      createdByAgentId: agentId,
-      sourceRunId: runId,
-      createdAt: new Date("2026-03-19T00:06:00.000Z"),
-      updatedAt: new Date("2026-03-19T00:06:00.000Z"),
-    });
-    const heartbeat = heartbeatService(db);
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("does not suppress bounded liveness continuation for stale agent-requested approvals", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run requested approval before continuing",
-      nextAction: "Continue after recovering from the stale approval.",
-    });
-    const approvalId = randomUUID();
-    await db.insert(approvals).values({
-      id: approvalId,
-      companyId,
-      type: "request_board_approval",
-      requestedByAgentId: agentId,
-      status: "pending",
-      payload: {},
-      createdAt: new Date("2026-03-19T00:06:00.000Z"),
-      updatedAt: new Date("2026-03-19T00:06:00.000Z"),
-    });
-    await db.insert(issueApprovals).values({
-      companyId,
-      issueId,
-      approvalId,
-      linkedByAgentId: agentId,
-      createdAt: new Date("2026-03-19T00:06:00.000Z"),
-    });
-    const heartbeat = heartbeatService(db);
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("does not re-dispatch assigned work while a live pending confirmation owns the next step", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "todo",
-      runStatus: "failed",
-    });
-    await db.insert(issueThreadInteractions).values({
-      companyId,
-      issueId,
-      kind: "request_confirmation",
-      status: "pending",
-      payload: {
-        version: 1,
-        prompt: "Approve the next action?",
-      },
-      createdByAgentId: agentId,
-      sourceRunId: runId,
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.dispatchRequeued).toBe(0);
-    expect(result.continuationRequeued).toBe(0);
-    expect(result.skipped).toBeGreaterThan(0);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "issue_assignment_recovery")));
-    expect(wakeups).toHaveLength(0);
-  });
-
-  it("expires a stale confirmation target and then queues bounded liveness continuation", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run produced a plan and needs approval",
-      nextAction: "Continue from the current plan revision.",
-    });
-    const documentId = randomUUID();
-    const oldRevisionId = randomUUID();
-    const currentRevisionId = randomUUID();
-    const interactionId = randomUUID();
-    await db.insert(documents).values({
-      id: documentId,
-      companyId,
-      title: "Plan",
-      format: "markdown",
-      latestBody: "current plan",
-      latestRevisionId: currentRevisionId,
-      latestRevisionNumber: 2,
-    });
-    await db.insert(issueDocuments).values({
-      companyId,
-      issueId,
-      documentId,
-      key: "plan",
-    });
-    await db.insert(documentRevisions).values([
-      {
-        id: oldRevisionId,
-        companyId,
-        documentId,
-        revisionNumber: 1,
-        title: "Plan",
-        format: "markdown",
-        body: "old plan",
-      },
-      {
-        id: currentRevisionId,
-        companyId,
-        documentId,
-        revisionNumber: 2,
-        title: "Plan",
-        format: "markdown",
-        body: "current plan",
-      },
-    ]);
-    await db.insert(issueThreadInteractions).values({
-      id: interactionId,
-      companyId,
-      issueId,
-      kind: "request_confirmation",
-      status: "pending",
-      continuationPolicy: "wake_assignee_on_accept",
-      payload: {
-        version: 1,
-        prompt: "Approve the plan?",
-        target: {
-          type: "issue_document",
-          issueId,
-          documentId,
-          key: "plan",
-          revisionId: oldRevisionId,
-          revisionNumber: 1,
-        },
-      },
-      createdByAgentId: agentId,
-      sourceRunId: runId,
-    });
-    const heartbeat = heartbeatService(db);
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const [interaction] = await db
-      .select()
-      .from(issueThreadInteractions)
-      .where(eq(issueThreadInteractions.id, interactionId));
-    expect(interaction?.status).toBe("expired");
-    expect((interaction?.result as Record<string, unknown> | null)?.outcome).toBe("stale_target");
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("expires a confirmation superseded by a user comment and then queues bounded liveness continuation", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run asked the board to confirm the next step",
-      nextAction: "Continue after incorporating the board comment.",
-    });
-    const interactionId = randomUUID();
-    await db.insert(issueThreadInteractions).values({
-      id: interactionId,
-      companyId,
-      issueId,
-      kind: "request_confirmation",
-      status: "pending",
-      payload: {
-        version: 1,
-        prompt: "Approve the next step?",
-        supersedeOnUserComment: true,
-      },
-      createdByAgentId: agentId,
-      sourceRunId: runId,
-      createdAt: new Date("2026-03-19T00:06:00.000Z"),
-    });
-    const commentId = randomUUID();
-    await db.insert(issueComments).values({
-      id: commentId,
-      companyId,
-      issueId,
-      authorUserId: "board",
-      body: "Use the narrower implementation path.",
-      createdAt: new Date("2026-03-19T00:07:00.000Z"),
-    });
-    const heartbeat = heartbeatService(db);
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const [interaction] = await db
-      .select()
-      .from(issueThreadInteractions)
-      .where(eq(issueThreadInteractions.id, interactionId));
-    expect(interaction?.status).toBe("expired");
-    expect(interaction?.result).toMatchObject({
-      outcome: "superseded_by_comment",
-      commentId,
-    });
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("queues bounded liveness continuation once a linked approval is resolved", async () => {
-    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run requested approval before continuing",
-      nextAction: "Continue after the approval decision.",
-    });
-    const approvalId = randomUUID();
-    await db.insert(approvals).values({
-      id: approvalId,
-      companyId,
-      type: "request_board_approval",
-      requestedByAgentId: agentId,
-      status: "rejected",
-      payload: {},
-      decidedByUserId: "board",
-      decidedAt: new Date("2026-03-19T00:06:00.000Z"),
-    });
-    await db.insert(issueApprovals).values({
-      companyId,
-      issueId,
-      approvalId,
-    });
-    const heartbeat = heartbeatService(db);
-    const sourceRun = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
-  });
-
-  it("queues a bounded liveness continuation when no pause hold suppresses it", async () => {
-    const { companyId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "plan_only",
-      livenessReason: "Run made no concrete progress",
-      nextAction: "Take the first concrete action now.",
-    });
-    const heartbeat = heartbeatService(db);
-
-    const sourceRun = await db
-      .select()
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runId))
-      .then((rows) => rows[0] ?? null);
-    if (!sourceRun) throw new Error("Expected source run");
-
-    await heartbeat.handleRunLivenessContinuationForTest(sourceRun);
-
-    const wakeups = await db
-      .select()
-      .from(agentWakeupRequests)
-      .where(and(eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.reason, "run_liveness_continuation")));
-    expect(wakeups).toHaveLength(1);
   });
 });

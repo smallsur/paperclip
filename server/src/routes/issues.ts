@@ -208,13 +208,6 @@ function isExplicitResumeCapableStatus(status: string | null | undefined) {
   return status === "done" || status === "blocked" || status === "todo" || status === "in_progress";
 }
 
-function getRequestConfirmationResolutionOutcome(interaction: { kind: string; result?: unknown }) {
-  if (interaction.kind !== "request_confirmation") return null;
-  if (typeof interaction.result !== "object" || interaction.result === null) return null;
-  const outcome = (interaction.result as { outcome?: unknown }).outcome;
-  return typeof outcome === "string" ? outcome : null;
-}
-
 function queueResolvedInteractionContinuationWakeup(input: {
   heartbeat: ReturnType<typeof heartbeatService>;
   issue: { id: string; assigneeAgentId: string | null; status: string };
@@ -225,7 +218,6 @@ function queueResolvedInteractionContinuationWakeup(input: {
     continuationPolicy: string;
     sourceCommentId?: string | null;
     sourceRunId?: string | null;
-    result?: unknown;
   };
   actor: { actorType: "user" | "agent"; actorId: string };
   source: string;
@@ -237,18 +229,8 @@ function queueResolvedInteractionContinuationWakeup(input: {
   if (
     input.interaction.continuationPolicy === "wake_assignee_on_accept"
     && input.interaction.status !== "accepted"
-    && !(input.interaction.status === "expired" && getRequestConfirmationResolutionOutcome(input.interaction) === "stale_target")
   ) return;
-  if (
-    input.interaction.status === "expired"
-    && !(
-      getRequestConfirmationResolutionOutcome(input.interaction) === "stale_target"
-      || (
-        input.interaction.continuationPolicy === "wake_assignee"
-        && getRequestConfirmationResolutionOutcome(input.interaction) === "superseded_by_comment"
-      )
-    )
-  ) return;
+  if (input.interaction.status === "expired") return;
   if (!input.issue.assigneeAgentId || isClosedIssueStatus(input.issue.status)) return;
 
   void input.heartbeat.wakeup(input.issue.assigneeAgentId, {
@@ -3059,41 +3041,6 @@ export function issueRoutes(
         continuationPolicy: interaction.continuationPolicy,
       },
     });
-
-    const refreshedIssue = await svc.getById(id);
-    if (
-      refreshedIssue
-      && (
-        refreshedIssue.status !== issue.status
-        || refreshedIssue.assigneeAgentId !== issue.assigneeAgentId
-        || refreshedIssue.assigneeUserId !== issue.assigneeUserId
-      )
-    ) {
-      await logActivity(db, {
-        companyId: issue.companyId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: "issue.updated",
-        entityType: "issue",
-        entityId: issue.id,
-        details: {
-          identifier: issue.identifier,
-          status: refreshedIssue.status,
-          assigneeAgentId: refreshedIssue.assigneeAgentId ?? null,
-          assigneeUserId: refreshedIssue.assigneeUserId ?? null,
-          source: "issue.thread_interaction_created",
-          interactionId: interaction.id,
-          interactionKind: interaction.kind,
-          _previous: {
-            status: issue.status,
-            assigneeAgentId: issue.assigneeAgentId ?? null,
-            assigneeUserId: issue.assigneeUserId ?? null,
-          },
-        },
-      });
-    }
 
     res.status(201).json(interaction);
   });

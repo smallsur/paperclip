@@ -317,10 +317,6 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     return output("completed", `Issue is ${issueStatus}`);
   }
 
-  if (issueStatus === "in_review") {
-    return output("needs_followup", "Issue is in review and waiting on an explicit review path", nextAction);
-  }
-
   if (declaredBlocker(input)) {
     return output("blocked", issueStatus === "blocked" ? "Issue status is blocked" : "Run output declared a concrete blocker", nextAction);
   }
@@ -329,20 +325,12 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     return output("empty_response", "Run succeeded without useful output or concrete action evidence");
   }
 
-  if (planExempt && usefulOutput) {
-    return output("advanced", "Planning/document task produced useful output and is exempt from plan-only classification");
+  if (concreteEvidence) {
+    return output("advanced", `Run produced concrete action evidence: ${evidenceReason(evidence)}`);
   }
 
-  if (concreteEvidence) {
-    const reason = `Run produced concrete action evidence: ${evidenceReason(evidence)}`;
-    if (nextAction && actionability === "runnable") {
-      return output("advanced", `${reason}; runnable next action remains`, nextAction);
-    }
-    if (nextAction && (actionability === "manager_review" || actionability === "unknown")) {
-      const disposition = actionability === "manager_review" ? "manager review" : "ambiguous review";
-      return output("needs_followup", `${reason}; next action requires ${disposition}`, nextAction);
-    }
-    return output("advanced", reason);
+  if (planExempt && usefulOutput) {
+    return output("advanced", "Planning/document task produced useful output and is exempt from plan-only classification");
   }
 
   if (looksLikePlanningOnly(input) || nextAction) {

@@ -1920,7 +1920,6 @@ function IssueChatSystemMessage({ message }: { message: ThreadMessage }) {
   const actorName = typeof custom.actorName === "string" ? custom.actorName : null;
   const actorType = typeof custom.actorType === "string" ? custom.actorType : null;
   const actorId = typeof custom.actorId === "string" ? custom.actorId : null;
-  const treeHoldActionLabel = typeof custom.treeHoldActionLabel === "string" ? custom.treeHoldActionLabel : null;
   const statusChange = typeof custom.statusChange === "object" && custom.statusChange
     ? custom.statusChange as { from: string | null; to: string | null }
     : null;
@@ -1973,7 +1972,7 @@ function IssueChatSystemMessage({ message }: { message: ThreadMessage }) {
         <div className={cn("flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs", isCurrentUser && "justify-end")}>
           <span className="font-medium text-foreground">{actorName}</span>
           <span className="text-muted-foreground">
-            {treeHoldActionLabel ?? (custom.followUpRequested === true ? "requested follow-up" : "updated this task")}
+            {custom.followUpRequested === true ? "requested follow-up" : "updated this task"}
           </span>
           <a
             href={anchorId ? `#${anchorId}` : undefined}

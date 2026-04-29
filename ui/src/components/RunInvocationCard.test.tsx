@@ -3,11 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ThemeProvider } from "../context/ThemeContext";
-import {
-  RUN_CANCEL_ISSUE_PAUSE_WARNING,
-  RunCancelIssuePauseWarning,
-  RunInvocationCard,
-} from "../pages/AgentDetail";
+import { RunInvocationCard } from "../pages/AgentDetail";
 
 describe("RunInvocationCard", () => {
   it("keeps verbose invocation details collapsed by default", () => {
@@ -38,13 +34,5 @@ describe("RunInvocationCard", () => {
     expect(html).not.toContain("very long prompt body");
     expect(html).not.toContain("ANTHROPIC_API_KEY");
     expect(html).not.toContain("triggeredBy");
-  });
-
-  it("renders the raw run cancellation warning copy", () => {
-    const html = renderToStaticMarkup(<RunCancelIssuePauseWarning />);
-
-    expect(html).toContain(RUN_CANCEL_ISSUE_PAUSE_WARNING);
-    expect(html).toContain("does not pause the issue");
-    expect(html).toContain("Pause work");
   });
 });

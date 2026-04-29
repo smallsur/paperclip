@@ -61,8 +61,6 @@ function attention(
     attentionBlockerCount: partial.attentionBlockerCount ?? 0,
     sampleBlockerIdentifier: partial.sampleBlockerIdentifier ?? null,
     sampleStalledBlockerIdentifier: partial.sampleStalledBlockerIdentifier ?? null,
-    nextActionOwner: partial.nextActionOwner ?? null,
-    nextActionHint: partial.nextActionHint ?? null,
   };
 }
 
@@ -190,64 +188,6 @@ const coveredBlockedMatrix: CoveredBlockedCell[] = [
     expectedVisual: "yellow ring",
     expectedCopy: "In Progress",
   },
-  {
-    label: "Recovery needed (productive run stopped)",
-    status: "blocked",
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "productive_run_stopped",
-      unresolvedBlockerCount: 1,
-      coveredBlockerCount: 0,
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-      nextActionHint: "wake_to_continue",
-    }),
-    expectedVisual: "red ring + alert overlay",
-    expectedCopy: "Blocked · liveness break at PAP-2642 · productive run stopped without continuation",
-  },
-  {
-    label: "Recovery needed (continuation exhausted)",
-    status: "blocked",
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "continuation_exhausted",
-      unresolvedBlockerCount: 1,
-      coveredBlockerCount: 0,
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-      nextActionHint: "create_recovery_issue",
-    }),
-    expectedVisual: "red ring + alert overlay",
-    expectedCopy: "Blocked · liveness break at PAP-2642 · automatic continuation exhausted",
-  },
-  {
-    label: "Recovery needed (continuation suppressed)",
-    status: "blocked",
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "continuation_suppressed",
-      unresolvedBlockerCount: 1,
-      coveredBlockerCount: 0,
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-      nextActionHint: "needs_human_review",
-    }),
-    expectedVisual: "red ring + alert overlay",
-    expectedCopy: "Blocked · liveness break at PAP-2642 · automatic continuation suppressed",
-  },
-  {
-    label: "Recovery needed (leaf surface, productive run stopped)",
-    status: "in_progress",
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "productive_run_stopped",
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-1", userId: null },
-      nextActionHint: "wake_to_continue",
-    }),
-    expectedVisual: "yellow ring + alert overlay",
-    expectedCopy: "Blocked · liveness break at PAP-2642 · productive run stopped without continuation",
-  },
 ];
 
 const coveredBlockedIssue = createIssue({
@@ -280,17 +220,13 @@ function summaryBlocker(
 type BlockedNoticeStateLabel =
   | "Default covered"
   | "Stalled (single leaf)"
-  | "Stalled (multiple leaves)"
-  | "Recovery needed (parent perspective)"
-  | "Recovery needed (leaf perspective)";
+  | "Stalled (multiple leaves)";
 
 type BlockedNoticeFixture = {
   label: BlockedNoticeStateLabel;
   caption: string;
-  issueStatus: string;
   blockers: IssueRelationIssueSummary[];
   blockerAttention: IssueBlockerAttention;
-  ownerAgentName?: string;
 };
 
 const stalledLeafSingle = summaryBlocker({
@@ -314,18 +250,10 @@ const stalledLeafMultiSecondary = summaryBlocker({
   status: "in_review",
 });
 
-const recoveryLeafSummary = summaryBlocker({
-  id: "issue-recovery-leaf",
-  identifier: "PAP-2642",
-  title: "Implementation phase that exited without continuation",
-  status: "in_progress",
-});
-
 const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   {
     label: "Default covered",
     caption: "Active sub-issue covers the chain — informational only.",
-    issueStatus: "blocked",
     blockers: [
       summaryBlocker({
         id: "issue-active-child",
@@ -345,7 +273,6 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   {
     label: "Stalled (single leaf)",
     caption: "Chain stalled on one leaf review — copy names the leaf and shows the chip strip.",
-    issueStatus: "blocked",
     blockers: [
       summaryBlocker({
         id: "issue-stalled-parent-single",
@@ -367,7 +294,6 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
   {
     label: "Stalled (multiple leaves)",
     caption: "Multiple stalled reviews — body uses plural agreement (\"reviews\"/\"them\") to match the chip strip.",
-    issueStatus: "blocked",
     blockers: [
       summaryBlocker({
         id: "issue-stalled-parent-multi-a",
@@ -391,43 +317,6 @@ const blockedNoticeFixtures: BlockedNoticeFixture[] = [
       stalledBlockerCount: 2,
       sampleStalledBlockerIdentifier: "PAP-2284",
     }),
-  },
-  {
-    label: "Recovery needed (parent perspective)",
-    caption: "Blocked parent whose dependency leaf had a productive run that exited without queueing a continuation.",
-    issueStatus: "blocked",
-    blockers: [
-      summaryBlocker({
-        id: "issue-recovery-parent",
-        identifier: "PAP-2089",
-        title: "Liveness forensics root",
-        status: "blocked",
-        terminalBlockers: [recoveryLeafSummary],
-      }),
-    ],
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "productive_run_stopped",
-      unresolvedBlockerCount: 1,
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-codex", userId: null },
-      nextActionHint: "wake_to_continue",
-    }),
-    ownerAgentName: "CodexSparkCoder",
-  },
-  {
-    label: "Recovery needed (leaf perspective)",
-    caption: "Same component on the invalid leaf itself — leaf-perspective copy, no chip strip, owner pill is the leaf assignee.",
-    issueStatus: "in_progress",
-    blockers: [],
-    blockerAttention: attention({
-      state: "recovery_needed",
-      reason: "productive_run_stopped",
-      sampleBlockerIdentifier: "PAP-2642",
-      nextActionOwner: { type: "agent", agentId: "agent-codex", userId: null },
-      nextActionHint: "wake_to_continue",
-    }),
-    ownerAgentName: "CodexSparkCoder",
   },
 ];
 
@@ -453,10 +342,9 @@ function BlockedNoticeSurface({
         </div>
         <div className={isMobile ? "max-w-[358px] px-3 py-3" : "min-w-[620px] px-4 py-3"}>
           <IssueBlockedNotice
-            issueStatus={fixture.issueStatus}
+            issueStatus="blocked"
             blockers={fixture.blockers}
             blockerAttention={fixture.blockerAttention}
-            ownerAgentName={fixture.ownerAgentName}
           />
           <p className="text-[11px] text-muted-foreground">{fixture.caption}</p>
         </div>

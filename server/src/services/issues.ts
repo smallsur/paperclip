@@ -29,10 +29,6 @@ import {
 } from "@paperclipai/db";
 import type {
   IssueBlockerAttention,
-  IssueBlockerAttentionReason,
-  IssueBlockerAttentionState,
-  IssueBlockerNextActionHint,
-  IssueBlockerNextActionOwner,
   IssueProductivityReview,
   IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
@@ -55,10 +51,6 @@ import {
   issueTreeControlService,
   type ActiveIssueTreePauseHoldGate,
 } from "./issue-tree-control.js";
-import {
-  isLiveExplicitApprovalWaitingPath,
-  isLiveExplicitInteractionWaitingPath,
-} from "./recovery/explicit-waiting-paths.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -678,7 +670,6 @@ const ACTIVE_RUN_STATUSES = ["queued", "running"];
 const BLOCKER_ATTENTION_ACTIVE_RUN_STATUSES = ["queued", "running"];
 const BLOCKER_ATTENTION_ACTIVE_WAKE_STATUSES = ["queued", "deferred_issue_execution"];
 const BLOCKER_ATTENTION_PENDING_INTERACTION_STATUSES = ["pending"];
-const BLOCKER_ATTENTION_WAITING_INTERACTION_KINDS = ["request_confirmation", "ask_user_questions"];
 const BLOCKER_ATTENTION_PENDING_APPROVAL_STATUSES = ["pending", "revision_requested"];
 const BLOCKER_ATTENTION_OPEN_RECOVERY_ORIGIN_KIND = "harness_liveness_escalation";
 const PRODUCTIVITY_REVIEW_ORIGIN_KIND = "issue_productivity_review";
@@ -696,18 +687,6 @@ const BLOCKER_ATTENTION_OPEN_RECOVERY_TERMINAL_STATUSES = ["done", "cancelled"];
 const BLOCKER_ATTENTION_MAX_DEPTH = 8;
 const BLOCKER_ATTENTION_MAX_NODES = 2000;
 const BLOCKER_ATTENTION_INVOKABLE_AGENT_STATUSES = new Set(["active", "idle", "running", "error"]);
-// Leaves whose latest issue-linked run looks "productive but stranded" — the
-// run produced concrete progress or described future work, but the issue is
-// non-terminal and no continuation/wake/interaction took ownership of the next
-// step. These leaves drive the recovery_needed surface.
-const BLOCKER_ATTENTION_RECOVERY_LIVENESS_STATES = new Set([
-  "advanced",
-  "needs_followup",
-  "plan_only",
-  "empty_response",
-]);
-const BLOCKER_ATTENTION_RECOVERY_LEAF_STATUSES = new Set(["todo", "in_progress"]);
-const BLOCKER_ATTENTION_DEFAULT_MAX_CONTINUATION_ATTEMPTS = 2;
 
 type IssueBlockerAttentionNode = {
   id: string;
@@ -717,7 +696,6 @@ type IssueBlockerAttentionNode = {
   title: string;
   status: string;
   executionRunId?: string | null;
-  executionState?: Record<string, unknown> | null;
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
 };
@@ -743,10 +721,6 @@ type IssueBlockerAttentionAgentRow = {
   id: string;
   companyId: string;
   status: string;
-};
-type IssueBlockerExplicitWaitingPath = {
-  owner: IssueBlockerNextActionOwner;
-  hint: IssueBlockerNextActionHint;
 };
 
 async function activeRunMapForIssues(
@@ -796,111 +770,7 @@ function createIssueBlockerAttention(input: Partial<IssueBlockerAttention> = {})
     attentionBlockerCount: input.attentionBlockerCount ?? 0,
     sampleBlockerIdentifier: input.sampleBlockerIdentifier ?? null,
     sampleStalledBlockerIdentifier: input.sampleStalledBlockerIdentifier ?? null,
-    nextActionOwner: input.nextActionOwner ?? null,
-    nextActionHint: input.nextActionHint ?? null,
   };
-}
-
-type LeafRecoveryClassification = {
-  reason: Extract<
-    IssueBlockerAttentionReason,
-    "productive_run_stopped" | "continuation_exhausted" | "continuation_suppressed"
-  >;
-  hint: IssueBlockerNextActionHint;
-  owner: IssueBlockerNextActionOwner;
-};
-
-function leafRecoveryHintForReason(
-  reason: LeafRecoveryClassification["reason"],
-  owner: IssueBlockerNextActionOwner,
-): IssueBlockerNextActionHint {
-  if (owner.type === "user") return "reassign";
-  if (owner.type === "none") return "reassign";
-  if (reason === "productive_run_stopped") return "wake_to_continue";
-  if (reason === "continuation_exhausted") return "create_recovery_issue";
-  return "needs_human_review";
-}
-
-function ownerForLeafRecovery(node: IssueBlockerAttentionNode): IssueBlockerNextActionOwner {
-  if (node.assigneeAgentId) {
-    return { type: "agent", agentId: node.assigneeAgentId, userId: null };
-  }
-  if (node.assigneeUserId) {
-    return { type: "user", agentId: null, userId: node.assigneeUserId };
-  }
-  return { type: "none", agentId: null, userId: null };
-}
-
-function ownerForExplicitWait(input: { assigneeAgentId?: string | null; assigneeUserId?: string | null }): IssueBlockerNextActionOwner {
-  if (input.assigneeUserId) {
-    return { type: "user", agentId: null, userId: input.assigneeUserId };
-  }
-  if (input.assigneeAgentId) {
-    return { type: "agent", agentId: input.assigneeAgentId, userId: null };
-  }
-  return { type: "user", agentId: null, userId: null };
-}
-
-function explicitWaitingPathForOwner(owner: IssueBlockerNextActionOwner): IssueBlockerExplicitWaitingPath {
-  return {
-    owner,
-    hint: "needs_human_review",
-  };
-}
-
-type IssueBlockerAttentionLatestRunRow = {
-  issueId: string | null;
-  status: string;
-  livenessState: string | null;
-  continuationAttempt: number | null;
-  finishedAt: Date | null;
-};
-
-type IssueBlockerAttentionLatestRun = {
-  status: string;
-  livenessState: string | null;
-  continuationAttempt: number | null;
-  finishedAt: Date | null;
-};
-
-function classifyLeafRecovery(input: {
-  node: IssueBlockerAttentionNode;
-  latestRun: IssueBlockerAttentionLatestRun | null;
-  hasActivePath: boolean;
-  hasWaitingPath: boolean;
-  hasProductivityReview: boolean;
-  agentInvokable: boolean;
-  maxContinuationAttempts: number;
-}): LeafRecoveryClassification | null {
-  const { node, latestRun, hasActivePath, hasWaitingPath, hasProductivityReview, agentInvokable, maxContinuationAttempts } = input;
-  if (!BLOCKER_ATTENTION_RECOVERY_LEAF_STATUSES.has(node.status)) return null;
-  if (hasActivePath || hasWaitingPath) return null;
-  if (!latestRun) return null;
-  if (latestRun.status !== "succeeded") return null;
-  if (!latestRun.livenessState || !BLOCKER_ATTENTION_RECOVERY_LIVENESS_STATES.has(latestRun.livenessState)) return null;
-
-  const owner = ownerForLeafRecovery(node);
-  // If the leaf has no agent owner at all, fall through to needs_attention so
-  // the existing "no owner" surface continues to apply.
-  if (owner.type === "none") return null;
-
-  let reason: LeafRecoveryClassification["reason"];
-  if (hasProductivityReview) {
-    reason = "continuation_suppressed";
-  } else if ((latestRun.continuationAttempt ?? 0) >= maxContinuationAttempts) {
-    reason = "continuation_exhausted";
-  } else {
-    reason = "productive_run_stopped";
-  }
-
-  // An invokable agent who can be woken keeps the wake_to_continue affordance;
-  // otherwise the user needs to reassign or escalate.
-  let hint = leafRecoveryHintForReason(reason, owner);
-  if (owner.type === "agent" && !agentInvokable) {
-    hint = reason === "continuation_exhausted" ? "create_recovery_issue" : "needs_human_review";
-  }
-
-  return { reason, hint, owner };
 }
 
 function blockerSampleIdentifier(node: IssueBlockerAttentionNode | null | undefined) {
@@ -1136,27 +1006,18 @@ async function listIssueBlockerAttentionMap(
   companyId: string,
   issueRows: IssueBlockerAttentionInputNode[],
 ): Promise<Map<string, IssueBlockerAttention>> {
-  const sameCompanyRows = issueRows.filter((row) => row.companyId === companyId);
-  const roots = sameCompanyRows.filter((row) => row.status === "blocked");
-  // Non-blocked, non-terminal input issues with an agent owner are eligible to
-  // surface as invalid leaves on their own detail/inbox surfaces.
-  const recoverySeedRows = sameCompanyRows.filter((row) =>
-    BLOCKER_ATTENTION_RECOVERY_LEAF_STATUSES.has(row.status) && Boolean(row.assigneeAgentId),
-  );
+  const roots = issueRows.filter((row) => row.companyId === companyId && row.status === "blocked");
   const attentionMap = new Map<string, IssueBlockerAttention>();
   for (const row of issueRows) {
     if (row.status !== "blocked") {
       attentionMap.set(row.id, createIssueBlockerAttention());
     }
   }
-  if (roots.length === 0 && recoverySeedRows.length === 0) return attentionMap;
+  if (roots.length === 0) return attentionMap;
 
   const nodesById = new Map<string, IssueBlockerAttentionNode>();
   const edgesByIssueId = new Map<string, IssueBlockerAttentionEdge[]>();
   for (const root of roots) nodesById.set(root.id, { ...root });
-  for (const seed of recoverySeedRows) {
-    if (!nodesById.has(seed.id)) nodesById.set(seed.id, { ...seed });
-  }
 
   let frontier = roots.map((root) => root.id);
   let truncated = false;
@@ -1175,7 +1036,6 @@ async function listIssueBlockerAttentionMap(
           title: issues.title,
           status: issues.status,
           executionRunId: issues.executionRunId,
-          executionState: issues.executionState,
           assigneeAgentId: issues.assigneeAgentId,
           assigneeUserId: issues.assigneeUserId,
         })
@@ -1201,7 +1061,6 @@ async function listIssueBlockerAttentionMap(
           title: issues.title,
           status: issues.status,
           executionRunId: issues.executionRunId,
-          executionState: issues.executionState,
           assigneeAgentId: issues.assigneeAgentId,
           assigneeUserId: issues.assigneeUserId,
         })
@@ -1301,73 +1160,26 @@ async function listIssueBlockerAttentionMap(
     }
   }
 
-  const nonTerminalNodeIds = [...nodesById.values()]
-    .filter((node) => node.status !== "done" && node.status !== "cancelled")
+  const reviewNodeIds = [...nodesById.values()]
+    .filter((node) => node.status === "in_review")
     .map((node) => node.id);
-  const explicitWaitingByIssueId = new Map<string, IssueBlockerExplicitWaitingPath>();
-  const setExplicitWaitingPath = (issueId: string | null | undefined, path: IssueBlockerExplicitWaitingPath) => {
-    if (!issueId || explicitWaitingByIssueId.has(issueId)) return;
-    explicitWaitingByIssueId.set(issueId, path);
-  };
-  for (const node of nodesById.values()) {
-    if (node.status === "done" || node.status === "cancelled") continue;
-    if (node.assigneeUserId) {
-      setExplicitWaitingPath(node.id, explicitWaitingPathForOwner(ownerForExplicitWait(node)));
-    }
-  }
-  if (nonTerminalNodeIds.length > 0) {
-    for (const chunk of chunkList(nonTerminalNodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
-      const interactionRows: Array<{
-        issueId: string;
-        companyId: string;
-        status: string;
-        createdByUserId: string | null;
-        createdAt: Date;
-      }> = await dbOrTx
-        .select({
-          issueId: issueThreadInteractions.issueId,
-          companyId: issueThreadInteractions.companyId,
-          status: issueThreadInteractions.status,
-          createdByUserId: issueThreadInteractions.createdByUserId,
-          createdAt: issueThreadInteractions.createdAt,
-        })
+  const explicitWaitingIssueIds = new Set<string>();
+  if (reviewNodeIds.length > 0) {
+    for (const chunk of chunkList(reviewNodeIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
+      const interactionRows: Array<{ issueId: string }> = await dbOrTx
+        .select({ issueId: issueThreadInteractions.issueId })
         .from(issueThreadInteractions)
         .where(
           and(
             eq(issueThreadInteractions.companyId, companyId),
             inArray(issueThreadInteractions.status, BLOCKER_ATTENTION_PENDING_INTERACTION_STATUSES),
-            inArray(issueThreadInteractions.kind, BLOCKER_ATTENTION_WAITING_INTERACTION_KINDS),
             inArray(issueThreadInteractions.issueId, chunk),
           ),
         );
-      for (const row of interactionRows) {
-        const node = nodesById.get(row.issueId);
-        if (!node || !isLiveExplicitInteractionWaitingPath(node, row)) continue;
-        setExplicitWaitingPath(row.issueId, explicitWaitingPathForOwner(ownerForExplicitWait({
-          assigneeUserId: node?.assigneeUserId ?? null,
-        })));
-      }
+      for (const row of interactionRows) explicitWaitingIssueIds.add(row.issueId);
 
-      const approvalRows: Array<{
-        issueId: string;
-        companyId: string;
-        status: string;
-        requestedByUserId: string | null;
-        linkedByUserId: string | null;
-        createdAt: Date;
-        updatedAt: Date;
-        linkedAt: Date;
-      }> = await dbOrTx
-        .select({
-          issueId: issueApprovals.issueId,
-          companyId: issueApprovals.companyId,
-          status: approvals.status,
-          requestedByUserId: approvals.requestedByUserId,
-          linkedByUserId: issueApprovals.linkedByUserId,
-          createdAt: approvals.createdAt,
-          updatedAt: approvals.updatedAt,
-          linkedAt: issueApprovals.createdAt,
-        })
+      const approvalRows: Array<{ issueId: string }> = await dbOrTx
+        .select({ issueId: issueApprovals.issueId })
         .from(issueApprovals)
         .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
         .where(
@@ -1377,24 +1189,10 @@ async function listIssueBlockerAttentionMap(
             inArray(issueApprovals.issueId, chunk),
           ),
         );
-      for (const row of approvalRows) {
-        const node = nodesById.get(row.issueId);
-        if (!node || !isLiveExplicitApprovalWaitingPath(node, row)) continue;
-        setExplicitWaitingPath(row.issueId, explicitWaitingPathForOwner(ownerForExplicitWait({
-          assigneeUserId: node?.assigneeUserId ?? null,
-        })));
-      }
+      for (const row of approvalRows) explicitWaitingIssueIds.add(row.issueId);
 
-      const recoveryRows: Array<{
-        originId: string | null;
-        assigneeAgentId: string | null;
-        assigneeUserId: string | null;
-      }> = await dbOrTx
-        .select({
-          originId: issues.originId,
-          assigneeAgentId: issues.assigneeAgentId,
-          assigneeUserId: issues.assigneeUserId,
-        })
+      const recoveryRows: Array<{ originId: string | null }> = await dbOrTx
+        .select({ originId: issues.originId })
         .from(issues)
         .where(
           and(
@@ -1406,7 +1204,7 @@ async function listIssueBlockerAttentionMap(
           ),
         );
       for (const row of recoveryRows) {
-        setExplicitWaitingPath(row.originId, explicitWaitingPathForOwner(ownerForExplicitWait(row)));
+        if (row.originId) explicitWaitingIssueIds.add(row.originId);
       }
     }
   }
@@ -1423,165 +1221,40 @@ async function listIssueBlockerAttentionMap(
     : [];
   const agentsById = new Map(agentRows.map((agent) => [agent.id, agent]));
 
-  // Recovery-leaf inputs: latest issue-linked run + productivity-review hold.
-  // We only need this for non-blocked agent-owned non-terminal nodes; gate the
-  // queries on that subset so we do not pull runs for every blocker chain.
-  const recoveryCandidateIds = [...nodesById.values()]
-    .filter((node) =>
-      BLOCKER_ATTENTION_RECOVERY_LEAF_STATUSES.has(node.status) &&
-      Boolean(node.assigneeAgentId) &&
-      !activeIssueIds.has(node.id) &&
-      !explicitWaitingByIssueId.has(node.id),
-    )
-    .map((node) => node.id);
-
-  const latestRunByIssueId = new Map<string, IssueBlockerAttentionLatestRun>();
-  if (recoveryCandidateIds.length > 0) {
-    for (const chunk of chunkList(recoveryCandidateIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
-      const runRows: IssueBlockerAttentionLatestRunRow[] = await dbOrTx
-        .select({
-          issueId: sql<string | null>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`,
-          status: heartbeatRuns.status,
-          livenessState: heartbeatRuns.livenessState,
-          continuationAttempt: heartbeatRuns.continuationAttempt,
-          finishedAt: heartbeatRuns.finishedAt,
-        })
-        .from(heartbeatRuns)
-        .where(
-          and(
-            eq(heartbeatRuns.companyId, companyId),
-            inArray(sql<string>`${heartbeatRuns.contextSnapshot} ->> 'issueId'`, chunk),
-          ),
-        )
-        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
-      for (const row of runRows) {
-        if (!row.issueId) continue;
-        if (latestRunByIssueId.has(row.issueId)) continue;
-        latestRunByIssueId.set(row.issueId, {
-          status: row.status,
-          livenessState: row.livenessState,
-          continuationAttempt: row.continuationAttempt,
-          finishedAt: row.finishedAt,
-        });
-      }
-    }
-  }
-
-  const productivityReviewIssueIds = new Set<string>();
-  if (recoveryCandidateIds.length > 0) {
-    for (const chunk of chunkList(recoveryCandidateIds, ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE)) {
-      const productivityRows: Array<{ originId: string | null }> = await dbOrTx
-        .select({ originId: issues.originId })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.companyId, companyId),
-            eq(issues.originKind, PRODUCTIVITY_REVIEW_ORIGIN_KIND),
-            isNull(issues.hiddenAt),
-            inArray(issues.originId, chunk),
-            notInArray(issues.status, PRODUCTIVITY_REVIEW_TERMINAL_STATUSES),
-          ),
-        );
-      for (const row of productivityRows) {
-        if (row.originId) productivityReviewIssueIds.add(row.originId);
-      }
-    }
-  }
-
-  const leafRecoveryByNodeId = new Map<string, LeafRecoveryClassification>();
-  for (const nodeId of recoveryCandidateIds) {
-    const node = nodesById.get(nodeId);
-    if (!node) continue;
-    const assignee = node.assigneeAgentId ? agentsById.get(node.assigneeAgentId) : null;
-    const agentInvokable = Boolean(
-      assignee && assignee.companyId === companyId && BLOCKER_ATTENTION_INVOKABLE_AGENT_STATUSES.has(assignee.status),
-    );
-    const classification = classifyLeafRecovery({
-      node,
-      latestRun: latestRunByIssueId.get(nodeId) ?? null,
-      hasActivePath: activeIssueIds.has(nodeId),
-      hasWaitingPath: explicitWaitingByIssueId.has(nodeId),
-      hasProductivityReview: productivityReviewIssueIds.has(nodeId),
-      agentInvokable,
-      maxContinuationAttempts: BLOCKER_ATTENTION_DEFAULT_MAX_CONTINUATION_ATTEMPTS,
-    });
-    if (classification) leafRecoveryByNodeId.set(nodeId, classification);
-  }
-
   type PathClassification = {
     covered: boolean;
-    coveredReason: IssueBlockerAttentionReason | null;
     stalled: boolean;
     sampleBlockerIdentifier: string | null;
     sampleStalledBlockerIdentifier: string | null;
-    recoveryLeafIdentifier: string | null;
-    recovery: LeafRecoveryClassification | null;
-    waitingPath: IssueBlockerExplicitWaitingPath | null;
   };
-  const emptyPath = (sample: string | null): PathClassification => ({
-    covered: false,
-    coveredReason: null,
-    stalled: false,
-    sampleBlockerIdentifier: sample,
-    sampleStalledBlockerIdentifier: null,
-    recoveryLeafIdentifier: null,
-    recovery: null,
-    waitingPath: null,
-  });
-  const coveredPath = (
-    sample: string | null,
-    coveredReason: IssueBlockerAttentionReason = null,
-    waitingPath: IssueBlockerExplicitWaitingPath | null = null,
-  ): PathClassification => ({
-    covered: true,
-    coveredReason,
-    stalled: false,
-    sampleBlockerIdentifier: sample,
-    sampleStalledBlockerIdentifier: null,
-    recoveryLeafIdentifier: null,
-    recovery: null,
-    waitingPath,
-  });
   const classifyPath = (
     nodeId: string,
     seen: Set<string>,
   ): PathClassification => {
     const sample = blockerSampleIdentifier(nodesById.get(nodeId));
     if (truncated || seen.has(nodeId)) {
-      return emptyPath(sample);
+      return { covered: false, stalled: false, sampleBlockerIdentifier: sample, sampleStalledBlockerIdentifier: null };
     }
     const node = nodesById.get(nodeId);
     if (!node || node.companyId !== companyId) {
-      return emptyPath(nodeId);
+      return { covered: false, stalled: false, sampleBlockerIdentifier: nodeId, sampleStalledBlockerIdentifier: null };
     }
     const nodeSample = blockerSampleIdentifier(node);
     if (node.status === "done") {
-      return coveredPath(nodeSample);
-    }
-    const explicitWaitingPath = explicitWaitingByIssueId.get(node.id) ?? null;
-    if (explicitWaitingPath) {
-      return coveredPath(nodeSample, "explicit_waiting", explicitWaitingPath);
+      return { covered: true, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
     }
     if (node.status === "in_review") {
-      if (activeIssueIds.has(node.id)) {
-        return coveredPath(nodeSample);
+      const hasWaitingPath = activeIssueIds.has(node.id) || Boolean(node.assigneeUserId) || explicitWaitingIssueIds.has(node.id);
+      if (hasWaitingPath) {
+        return { covered: true, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
       }
-      return {
-        covered: false,
-        coveredReason: null,
-        stalled: true,
-        sampleBlockerIdentifier: nodeSample,
-        sampleStalledBlockerIdentifier: nodeSample,
-        recoveryLeafIdentifier: null,
-        recovery: null,
-        waitingPath: null,
-      };
+      return { covered: false, stalled: true, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: nodeSample };
     }
     if (activeIssueIds.has(node.id)) {
-      return coveredPath(nodeSample);
+      return { covered: true, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
     }
     if (node.status === "cancelled") {
-      return emptyPath(nodeSample);
+      return { covered: false, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
     }
 
     const downstream = (edgesByIssueId.get(node.id) ?? []).filter((edge) => nodesById.get(edge.blockerIssueId)?.status !== "done");
@@ -1591,95 +1264,48 @@ async function listIssueBlockerAttentionMap(
       const classified = downstream.map((edge) => classifyPath(edge.blockerIssueId, nextSeen));
       const stalledChild = classified.find((result) => result.stalled || result.sampleStalledBlockerIdentifier);
       const sampleStalled = stalledChild?.sampleStalledBlockerIdentifier ?? null;
-      const recoveryChild = classified.find((result) => result.recovery && result.recoveryLeafIdentifier);
-      const recoveryLeafIdentifier = recoveryChild?.recoveryLeafIdentifier ?? null;
-      const recovery = recoveryChild?.recovery ?? null;
-      const waitingEntry = classified.find((result) => result.coveredReason === "explicit_waiting" && result.waitingPath);
-      const waitingPath = waitingEntry?.waitingPath ?? null;
-      const hardAttention = classified.find((result) => !result.covered && !result.stalled && !result.recovery);
+      const hardAttention = classified.find((result) => !result.covered && !result.stalled);
       if (hardAttention) {
         return {
           covered: false,
-          coveredReason: null,
           stalled: false,
           sampleBlockerIdentifier: hardAttention.sampleBlockerIdentifier,
           sampleStalledBlockerIdentifier: sampleStalled,
-          recoveryLeafIdentifier,
-          recovery,
-          waitingPath,
-        };
-      }
-      if (recoveryChild) {
-        return {
-          covered: false,
-          coveredReason: null,
-          stalled: false,
-          sampleBlockerIdentifier: recoveryLeafIdentifier ?? recoveryChild.sampleBlockerIdentifier,
-          sampleStalledBlockerIdentifier: sampleStalled,
-          recoveryLeafIdentifier,
-          recovery,
-          waitingPath,
         };
       }
       const stalledEntry = classified.find((result) => result.stalled);
       if (stalledEntry) {
         return {
           covered: false,
-          coveredReason: null,
           stalled: true,
           sampleBlockerIdentifier: stalledEntry.sampleBlockerIdentifier,
           sampleStalledBlockerIdentifier: sampleStalled,
-          recoveryLeafIdentifier: null,
-          recovery: null,
-          waitingPath,
         };
       }
       return {
         covered: true,
-        coveredReason: waitingPath ? "explicit_waiting" : null,
         stalled: false,
-        sampleBlockerIdentifier: waitingEntry?.sampleBlockerIdentifier ?? classified[0]?.sampleBlockerIdentifier ?? nodeSample,
+        sampleBlockerIdentifier: classified[0]?.sampleBlockerIdentifier ?? nodeSample,
         sampleStalledBlockerIdentifier: null,
-        recoveryLeafIdentifier: null,
-        recovery: null,
-        waitingPath,
-      };
-    }
-
-    const recovery = leafRecoveryByNodeId.get(node.id) ?? null;
-    if (recovery) {
-      return {
-        covered: false,
-        coveredReason: null,
-        stalled: false,
-        sampleBlockerIdentifier: nodeSample,
-        sampleStalledBlockerIdentifier: null,
-        recoveryLeafIdentifier: nodeSample,
-        recovery,
-        waitingPath: null,
       };
     }
 
     if (node.assigneeAgentId) {
       const assignee = agentsById.get(node.assigneeAgentId);
       if (!assignee || assignee.companyId !== companyId || !BLOCKER_ATTENTION_INVOKABLE_AGENT_STATUSES.has(assignee.status)) {
-        return emptyPath(nodeSample);
+        return { covered: false, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
       }
     }
 
-    return emptyPath(nodeSample);
+    return { covered: false, stalled: false, sampleBlockerIdentifier: nodeSample, sampleStalledBlockerIdentifier: null };
   };
 
   for (const root of roots) {
     const topLevelEdges = (edgesByIssueId.get(root.id) ?? []).filter((edge) => nodesById.get(edge.blockerIssueId)?.status !== "done");
     if (topLevelEdges.length === 0) {
-      const waitingPath = explicitWaitingByIssueId.get(root.id) ?? null;
       attentionMap.set(root.id, createIssueBlockerAttention({
-        state: waitingPath ? "covered" : "needs_attention",
-        reason: waitingPath ? "explicit_waiting" : "attention_required",
-        sampleBlockerIdentifier: waitingPath ? blockerSampleIdentifier(nodesById.get(root.id)) : null,
-        nextActionOwner: waitingPath?.owner ?? null,
-        nextActionHint: waitingPath?.hint ?? null,
+        state: "needs_attention",
+        reason: "attention_required",
       }));
       continue;
     }
@@ -1690,48 +1316,28 @@ async function listIssueBlockerAttentionMap(
     }));
     const coveredBlockerCount = classified.filter((entry) => entry.result.covered).length;
     const stalledBlockerCount = classified.filter((entry) => entry.result.stalled).length;
-    const recoveryEntry = classified.find((entry) => entry.result.recovery && entry.result.recoveryLeafIdentifier);
-    const recoveryBlockerCount = classified.filter((entry) => entry.result.recovery).length;
-    const attentionBlockerCount = classified.length - coveredBlockerCount - stalledBlockerCount - recoveryBlockerCount;
-    const hardAttentionEntry = classified.find((entry) => !entry.result.covered && !entry.result.stalled && !entry.result.recovery);
+    const attentionBlockerCount = classified.length - coveredBlockerCount - stalledBlockerCount;
+    const hardAttentionEntry = classified.find((entry) => !entry.result.covered && !entry.result.stalled);
     const stalledEntry = classified.find((entry) => entry.result.stalled);
-    const waitingEntry = classified.find((entry) => entry.result.coveredReason === "explicit_waiting" && entry.result.waitingPath);
-    const sampleEntry = hardAttentionEntry ?? recoveryEntry ?? stalledEntry ?? classified[0] ?? null;
+    const sampleEntry = hardAttentionEntry ?? stalledEntry ?? classified[0] ?? null;
     const sampleNode = sampleEntry ? nodesById.get(sampleEntry.edge.blockerIssueId) : null;
     const sampleStalledFromChain = classified
       .map((entry) => entry.result.sampleStalledBlockerIdentifier)
       .find((value) => value);
-    const recoveryLeafIdentifier = recoveryEntry?.result.recoveryLeafIdentifier ?? null;
-    const recoveryClassification = recoveryEntry?.result.recovery ?? null;
 
-    let state: IssueBlockerAttentionState;
-    let reason: IssueBlockerAttentionReason;
-    let nextActionOwner: IssueBlockerNextActionOwner | null = null;
-    let nextActionHint: IssueBlockerNextActionHint = null;
-    let sampleBlockerIdentifier =
-      sampleEntry?.result.sampleBlockerIdentifier ?? blockerSampleIdentifier(sampleNode);
+    let state: IssueBlockerAttention["state"];
+    let reason: IssueBlockerAttention["reason"];
     if (attentionBlockerCount > 0) {
       state = "needs_attention";
       reason = "attention_required";
-    } else if (recoveryClassification) {
-      state = "recovery_needed";
-      reason = recoveryClassification.reason;
-      nextActionOwner = recoveryClassification.owner;
-      nextActionHint = recoveryClassification.hint;
-      sampleBlockerIdentifier = recoveryLeafIdentifier ?? sampleBlockerIdentifier;
     } else if (stalledBlockerCount > 0) {
       state = "stalled";
       reason = "stalled_review";
     } else {
       state = "covered";
-      reason = waitingEntry
-        ? "explicit_waiting"
-        : topLevelEdges.every((edge) => nodesById.get(edge.blockerIssueId)?.parentId === root.id)
-          ? "active_child"
-          : "active_dependency";
-      nextActionOwner = waitingEntry?.result.waitingPath?.owner ?? null;
-      nextActionHint = waitingEntry?.result.waitingPath?.hint ?? null;
-      sampleBlockerIdentifier = waitingEntry?.result.sampleBlockerIdentifier ?? sampleBlockerIdentifier;
+      reason = topLevelEdges.every((edge) => nodesById.get(edge.blockerIssueId)?.parentId === root.id)
+        ? "active_child"
+        : "active_dependency";
     }
 
     attentionMap.set(root.id, createIssueBlockerAttention({
@@ -1741,37 +1347,9 @@ async function listIssueBlockerAttentionMap(
       coveredBlockerCount,
       stalledBlockerCount,
       attentionBlockerCount,
-      sampleBlockerIdentifier,
+      sampleBlockerIdentifier: sampleEntry?.result.sampleBlockerIdentifier ?? blockerSampleIdentifier(sampleNode),
       sampleStalledBlockerIdentifier:
         stalledEntry?.result.sampleStalledBlockerIdentifier ?? sampleStalledFromChain ?? null,
-      nextActionOwner,
-      nextActionHint,
-    }));
-  }
-
-  // Non-blocked recovery seeds: a leaf that is itself the invalid endpoint
-  // gets its own recovery_needed surface (e.g. opening the leaf directly from
-  // an inbox wake).
-  for (const seed of recoverySeedRows) {
-    const waitingPath = explicitWaitingByIssueId.get(seed.id) ?? null;
-    if (waitingPath) {
-      attentionMap.set(seed.id, createIssueBlockerAttention({
-        state: "covered",
-        reason: "explicit_waiting",
-        sampleBlockerIdentifier: blockerSampleIdentifier(nodesById.get(seed.id)) ?? seed.identifier ?? seed.id,
-        nextActionOwner: waitingPath.owner,
-        nextActionHint: waitingPath.hint,
-      }));
-      continue;
-    }
-    const recovery = leafRecoveryByNodeId.get(seed.id);
-    if (!recovery) continue;
-    attentionMap.set(seed.id, createIssueBlockerAttention({
-      state: "recovery_needed",
-      reason: recovery.reason,
-      sampleBlockerIdentifier: blockerSampleIdentifier(nodesById.get(seed.id)) ?? seed.identifier ?? seed.id,
-      nextActionOwner: recovery.owner,
-      nextActionHint: recovery.hint,
     }));
   }
 
