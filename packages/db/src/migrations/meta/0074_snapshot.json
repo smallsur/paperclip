@@ -2965,7 +2965,7 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 1073741824
+          "default": 10485760
         },
         "require_board_approval_for_new_agents": {
           "name": "require_board_approval_for_new_agents",

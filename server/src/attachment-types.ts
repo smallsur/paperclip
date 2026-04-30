@@ -99,7 +99,7 @@ export const MAX_ATTACHMENT_BYTES =
 
 export function normalizeIssueAttachmentMaxBytes(value: number | null | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES;
+    return Math.min(DEFAULT_COMPANY_ATTACHMENT_MAX_BYTES, MAX_ATTACHMENT_BYTES);
   }
-  return Math.min(Math.floor(value), MAX_COMPANY_ATTACHMENT_MAX_BYTES);
+  return Math.min(Math.floor(value), MAX_COMPANY_ATTACHMENT_MAX_BYTES, MAX_ATTACHMENT_BYTES);
 }

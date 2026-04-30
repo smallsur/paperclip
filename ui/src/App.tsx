@@ -27,6 +27,7 @@ import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
+import { CompanyEnvironments } from "./pages/CompanyEnvironments";
 import { CompanyAccess } from "./pages/CompanyAccess";
 import { CompanyInvites } from "./pages/CompanyInvites";
 import { CompanySkills } from "./pages/CompanySkills";
@@ -64,6 +65,7 @@ function boardRoutes() {
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
+      <Route path="company/settings/environments" element={<CompanyEnvironments />} />
       <Route path="company/settings/access" element={<CompanyAccess />} />
       <Route path="company/settings/invites" element={<CompanyInvites />} />
       <Route path="company/export/*" element={<CompanyExport />} />
@@ -99,7 +101,9 @@ function boardRoutes() {
       <Route path="issues/done" element={<Navigate to="/issues" replace />} />
       <Route path="issues/recent" element={<Navigate to="/issues" replace />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
-      <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
+      {import.meta.env.DEV ? (
+        <Route path="tests/perf/long-thread" element={<IssueChatLongThreadPerf />} />
+      ) : null}
       <Route path="routines" element={<Routines />} />
       <Route path="routines/:routineId" element={<RoutineDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />

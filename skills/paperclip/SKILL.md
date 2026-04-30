@@ -292,6 +292,8 @@ If the plan needs explicit approval before implementation, update the `plan` doc
 
 When asked to convert a plan into executable Paperclip tasks — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-converting-plans-to-tasks`.
 
+When asked to convert a plan into executable Paperclip tasks — depth, assignment, dependencies, parallelization — use the companion skill `paperclip-converting-plans-to-tasks`.
+
 Recommended API flow:
 
 ```bash

@@ -71,6 +71,7 @@ type RestoreTreeStatusResult = TreeStatusUpdateResult & {
 const TERMINAL_ISSUE_STATUSES = new Set<IssueStatus>(["done", "cancelled"]);
 const ACTIVE_RUN_STATUSES = ["queued", "running"] as const;
 const DEFAULT_RELEASE_POLICY: IssueTreeHoldReleasePolicy = { strategy: "manual" };
+const MAX_PAUSE_HOLD_ANCESTOR_DEPTH = 100;
 export const ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS: ReadonlySet<string> = new Set([
   "issue_commented",
   "issue_reopened_via_comment",
@@ -589,7 +590,11 @@ export function issueTreeControlService(db: Db) {
     let currentIssueId: string | null = issueId;
     const visited = new Set<string>();
 
-    while (currentIssueId && !visited.has(currentIssueId)) {
+    while (
+      currentIssueId
+      && !visited.has(currentIssueId)
+      && visited.size < MAX_PAUSE_HOLD_ANCESTOR_DEPTH
+    ) {
       visited.add(currentIssueId);
       const hold = holdByRootIssueId.get(currentIssueId);
       if (hold) {

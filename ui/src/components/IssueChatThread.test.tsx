@@ -399,6 +399,71 @@ describe("IssueChatThread", () => {
     });
   });
 
+  it("measures tall virtual rows before positioning following rows", async () => {
+    const root = createRoot(container);
+    const requestAnimationFrameMock = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 0;
+      });
+
+    act(() => {
+      root.render(
+        <MemoryRouter>
+          <IssueChatThread
+            comments={issueChatLongThreadComments}
+            linkedRuns={issueChatLongThreadLinkedRuns}
+            timelineEvents={issueChatLongThreadEvents}
+            liveRuns={[]}
+            agentMap={issueChatLongThreadAgentMap}
+            currentUserId="user-board"
+            onAdd={async () => {}}
+            showComposer={false}
+            showJumpToLatest={false}
+            enableLiveTranscriptPolling={false}
+            transcriptsByRunId={issueChatLongThreadTranscriptsByRunId}
+            hasOutputForRun={(runId) => issueChatLongThreadTranscriptsByRunId.has(runId)}
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    const virtualRows = container.querySelectorAll<HTMLDivElement>(
+      '[data-testid="issue-chat-thread-virtual-row"]',
+    );
+    expect(virtualRows.length).toBeGreaterThan(1);
+
+    Object.defineProperty(virtualRows[0], "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        x: 0,
+        y: 0,
+        width: 700,
+        height: 800,
+        top: 0,
+        right: 700,
+        bottom: 800,
+        left: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    await act(async () => {
+      virtualRows[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const nextTransform = virtualRows[1].style.transform;
+    const translateY = Number(nextTransform.match(/translateY\(([-\d.]+)px\)/)?.[1] ?? "0");
+    expect(translateY).toBeGreaterThanOrEqual(800);
+
+    act(() => {
+      root.unmount();
+    });
+    requestAnimationFrameMock.mockRestore();
+  });
+
   it("scrolls loaded hash targets through the virtualized message index", () => {
     const root = createRoot(container);
     const targetComment = issueChatLongThreadComments.at(-1);
@@ -649,11 +714,11 @@ describe("IssueChatThread", () => {
     scrollHost.remove();
   });
 
-  // PAP-2672 follow-up: clicking Jump to latest must refresh the comments
-  // page so a comment that arrived after the initial load is in cache before
-  // we resolve the scroll target. Otherwise we land on the latest *loaded*
-  // comment instead of the absolute newest.
-  it("invokes onRefreshLatestComments before scrolling on Jump to latest", () => {
+  // Regression for PAP-2672 follow-up: clicking Jump to latest must refresh
+  // the comments page so a comment that arrived after the initial load is
+  // present before we scroll. Otherwise the user lands on the latest *loaded*
+  // comment but not the absolute newest.
+  it("invokes onRefreshLatestComments before scrolling on Jump to latest", async () => {
     const refreshMock = vi.fn(async () => undefined);
     const directComments = issueChatLongThreadComments.slice(0, 8);
 

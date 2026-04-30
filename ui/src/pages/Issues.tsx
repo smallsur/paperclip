@@ -63,16 +63,25 @@ export function Issues() {
   const queryClient = useQueryClient();
   const fetchNextPageInFlightRef = useRef(false);
 
-  const initialSearch = searchParams.get("q") ?? "";
-  const [syncedSearch, setSyncedSearch] = useState(initialSearch);
+  const urlSearch = searchParams.get("q") ?? "";
+  const [searchOverride, setSearchOverride] = useState<{ search: string; locationSearch: string } | null>(null);
+  const syncedSearch = useMemo(() => {
+    if (typeof window !== "undefined" && searchOverride?.locationSearch === window.location.search) {
+      return searchOverride.search;
+    }
+    return urlSearch;
+  }, [searchOverride, urlSearch, location.search]);
   const participantAgentId = searchParams.get("participantAgentId") ?? undefined;
   const initialWorkspaces = searchParams.getAll("workspace").filter((workspaceId) => workspaceId.length > 0);
   const workspaceIdFilter = initialWorkspaces.length === 1 ? initialWorkspaces[0] : undefined;
   const handleSearchChange = useCallback((search: string) => {
-    setSyncedSearch(search);
     const nextUrl = buildIssuesSearchUrl(window.location.href, search);
-    if (!nextUrl) return;
+    if (!nextUrl) {
+      setSearchOverride(null);
+      return;
+    }
     window.history.replaceState(window.history.state, "", nextUrl);
+    setSearchOverride({ search, locationSearch: window.location.search });
   }, []);
 
   const { data: agents } = useQuery({
@@ -111,10 +120,6 @@ export function Issues() {
   }, [setBreadcrumbs]);
 
   const issuePageSize = workspaceIdFilter ? WORKSPACE_FILTER_ISSUE_LIMIT : ISSUES_PAGE_SIZE;
-
-  useEffect(() => {
-    setSyncedSearch(initialSearch);
-  }, [initialSearch]);
 
   const {
     data: issuePages,

@@ -28,12 +28,6 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "@/lib/router";
-import {
-  observeWindowOffset,
-  observeWindowRect,
-  useVirtualizer,
-  windowScroll,
-} from "@tanstack/react-virtual";
 import type {
   Agent,
   FeedbackDataSharingPreference,
@@ -226,6 +220,9 @@ function useStableEvent<T extends (...args: never[]) => unknown>(callback: T | u
   return useMemo(() => {
     if (!callback) return undefined;
     return ((...args: Parameters<T>) => callbackRef.current?.(...args)) as T;
+    // Keep the wrapper stable while the callback identity changes; the ref above
+    // carries the current callback implementation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Boolean(callback)]);
 }
 
@@ -324,8 +321,8 @@ interface IssueChatThreadProps {
   composerRef?: Ref<IssueChatComposerHandle>;
   /**
    * Hook for the parent to refetch comments when the user explicitly asks
-   * to jump to the latest comment — used so any comments that arrived after
-   * the initial load are in the loaded set before we resolve "latest".
+   * to jump to the latest comment. Used to make sure the absolute newest
+   * comment is in the loaded set before we scroll to it.
    */
   onRefreshLatestComments?: () => Promise<unknown> | void;
 }
@@ -1540,26 +1537,26 @@ function IssueChatAssistantMessage({
                       <Copy className="mr-2 h-3.5 w-3.5" />
                       Copy message
                     </DropdownMenuItem>
-                    {canStopRun && onStopRun && runId ? (
-                      <DropdownMenuItem
-                        disabled={isStoppingRun}
-                        className={cn(
-                          stopRunLabel.toLowerCase().includes("pause")
-                            ? "text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200"
-                            : "text-red-700 focus:text-red-800 dark:text-red-300 dark:focus:text-red-200",
-                        )}
-                        onSelect={() => {
-                          void onStopRun(runId);
-                        }}
-                      >
-                        {stopRunLabel.toLowerCase().includes("pause") ? (
-                          <PauseCircle className="mr-2 h-3.5 w-3.5" />
-                        ) : (
-                          <Square className="mr-2 h-3.5 w-3.5 fill-current" />
-                        )}
-                        {isStoppingRun ? stoppingRunLabel : stopRunLabel}
-                      </DropdownMenuItem>
-                    ) : null}
+                      {canStopRun && onStopRun && runId ? (
+                        <DropdownMenuItem
+                          disabled={isStoppingRun}
+                          className={cn(
+                            stopRunLabel.toLowerCase().includes("pause")
+                              ? "text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200"
+                              : "text-red-700 focus:text-red-800 dark:text-red-300 dark:focus:text-red-200",
+                          )}
+                          onSelect={() => {
+                            void onStopRun(runId);
+                          }}
+                        >
+                          {stopRunLabel.toLowerCase().includes("pause") ? (
+                            <PauseCircle className="mr-2 h-3.5 w-3.5" />
+                          ) : (
+                            <Square className="mr-2 h-3.5 w-3.5 fill-current" />
+                          )}
+                          {isStoppingRun ? stoppingRunLabel : stopRunLabel}
+                        </DropdownMenuItem>
+                      ) : null}
                     {runHref ? (
                       <DropdownMenuItem asChild>
                         <Link to={runHref} target="_blank" rel="noreferrer noopener">
@@ -2196,6 +2193,133 @@ type VirtualizedScrollMode =
   | { kind: "window" }
   | { kind: "element"; element: HTMLElement };
 
+type SimpleVirtualItem = {
+  index: number;
+  key: React.Key;
+  start: number;
+  size: number;
+};
+
+function useIssueThreadVirtualizer({
+  count,
+  estimateSize,
+  overscan,
+  scrollMargin,
+  gap,
+  getItemKey,
+  mode,
+}: {
+  count: number;
+  estimateSize: () => number;
+  overscan: number;
+  scrollMargin: number;
+  gap: number;
+  getItemKey: (index: number) => React.Key;
+  mode: VirtualizedScrollMode;
+}) {
+  const measuredSizeByKeyRef = useRef(new Map<React.Key, number>());
+  const [, rerender] = useState(0);
+  const estimatedSize = estimateSize();
+
+  const itemStarts: number[] = [];
+  const itemSizes: number[] = [];
+  let nextStart = scrollMargin;
+  for (let index = 0; index < count; index += 1) {
+    const key = getItemKey(index);
+    const size = measuredSizeByKeyRef.current.get(key) ?? estimatedSize;
+    itemStarts.push(nextStart);
+    itemSizes.push(size);
+    nextStart += size + gap;
+  }
+  const totalSize = Math.max(0, nextStart - scrollMargin - gap);
+
+  const viewportHeight = () => (mode.kind === "window" ? window.innerHeight : mode.element.clientHeight);
+  const scrollOffset = () => (mode.kind === "window" ? window.scrollY : mode.element.scrollTop);
+  const maxScrollOffset = () => {
+    const targetScrollHeight = mode.kind === "window"
+      ? document.documentElement.scrollHeight
+      : mode.element.scrollHeight;
+    return Math.max(0, Math.max(targetScrollHeight, totalSize) - viewportHeight());
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const target: Window | HTMLElement = mode.kind === "window" ? window : mode.element;
+    const update = () => rerender((value) => value + 1);
+    target.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      target.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [mode]);
+
+  const rawStart = Math.max(scrollMargin, scrollOffset());
+  const rawEnd = rawStart + viewportHeight();
+  let visibleStartIndex = 0;
+  while (
+    visibleStartIndex < count - 1
+    && itemStarts[visibleStartIndex] + itemSizes[visibleStartIndex] < rawStart
+  ) {
+    visibleStartIndex += 1;
+  }
+  let visibleEndIndex = visibleStartIndex;
+  while (visibleEndIndex < count - 1 && itemStarts[visibleEndIndex] <= rawEnd) {
+    visibleEndIndex += 1;
+  }
+  const startIndex = Math.max(0, visibleStartIndex - overscan);
+  const endIndex = Math.min(count - 1, visibleEndIndex + overscan);
+  const virtualItems: SimpleVirtualItem[] = [];
+  for (let index = startIndex; index <= endIndex; index += 1) {
+    virtualItems.push({
+      index,
+      key: getItemKey(index),
+      start: itemStarts[index] ?? scrollMargin,
+      size: itemSizes[index] ?? estimatedSize,
+    });
+  }
+
+  const scrollToIndex = (
+    index: number,
+    options?: { align?: "start" | "center" | "end" | "auto"; behavior?: ScrollBehavior },
+  ) => {
+    const clampedIndex = Math.max(0, Math.min(index, count - 1));
+    const targetMax = maxScrollOffset();
+    let top = itemStarts[clampedIndex] ?? scrollMargin;
+    if (options?.align === "center") {
+      top = top - viewportHeight() / 2 + (itemSizes[clampedIndex] ?? estimatedSize) / 2;
+    } else if (options?.align === "end") {
+      top = top + (itemSizes[clampedIndex] ?? estimatedSize) - viewportHeight();
+    }
+    top = Math.max(0, Math.min(top, targetMax));
+    if (mode.kind === "window") {
+      window.scrollTo({ top, behavior: options?.behavior });
+    } else {
+      mode.element.scrollTo({ top, behavior: options?.behavior });
+    }
+    rerender((value) => value + 1);
+  };
+
+  return {
+    getVirtualItems: () => virtualItems,
+    getTotalSize: () => totalSize,
+    scrollToIndex,
+    measure: () => undefined,
+    measureElement: (element?: HTMLElement | null) => {
+      if (!element) return;
+      const index = Number(element.dataset.index);
+      if (!Number.isInteger(index) || index < 0 || index >= count) return;
+      const measuredSize = element.getBoundingClientRect().height || element.offsetHeight;
+      if (!Number.isFinite(measuredSize) || measuredSize <= 0) return;
+      const key = getItemKey(index);
+      const previousSize = measuredSizeByKeyRef.current.get(key) ?? estimatedSize;
+      if (Math.abs(previousSize - measuredSize) < 1) return;
+      measuredSizeByKeyRef.current.set(key, measuredSize);
+      rerender((value) => value + 1);
+    },
+  };
+}
+
 // The chat thread renders inside `<main id="main-content">` on the real issue
 // page (overflow-auto on desktop), but lives at document scope on mobile (main
 // is overflow-visible) and in the auth-free perf fixture. Walk the DOM to find
@@ -2304,31 +2428,14 @@ const VirtualizedIssueChatThreadListInner = forwardRef<
     ? VIRTUALIZED_THREAD_GAP_EMBEDDED_PX
     : VIRTUALIZED_THREAD_GAP_FULL_PX;
 
-  // Window-mode passes window-specific observers/scroll-fn through the same
-  // useVirtualizer hook (the `Window` vs `Element` type mismatch in the
-  // observer signatures is invisible at runtime — both reach into
-  // instance.scrollElement/targetWindow uniformly — so we widen via `any`
-  // rather than splitting into two component variants).
-  const virtualizerOptions: Record<string, unknown> = mode.kind === "window"
-    ? {
-        getScrollElement: () => (typeof document !== "undefined" ? window : null),
-        observeElementRect: observeWindowRect,
-        observeElementOffset: observeWindowOffset,
-        scrollToFn: windowScroll,
-        initialOffset: () => typeof window !== "undefined" ? window.scrollY : 0,
-      }
-    : {
-        getScrollElement: () => mode.element,
-      };
-
-  const virtualizer = useVirtualizer({
-    ...(virtualizerOptions as Parameters<typeof useVirtualizer>[0]),
+  const virtualizer = useIssueThreadVirtualizer({
     count: messages.length,
     estimateSize: () => VIRTUALIZED_THREAD_ROW_ESTIMATE_PX,
     overscan: VIRTUALIZED_THREAD_OVERSCAN,
     scrollMargin,
     gap,
     getItemKey: (index) => messages[index]?.id ?? index,
+    mode,
   });
 
   useImperativeHandle(ref, () => ({
