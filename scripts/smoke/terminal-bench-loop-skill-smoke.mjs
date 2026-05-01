@@ -312,6 +312,7 @@ async function main() {
     `Expected iteration issue to be in_review, got ${verifiedIteration.status}`,
   );
   assert(verifiedRunDoc.body.includes(`${artifactRoot}/results.jsonl`), "Expected run doc to include mocked results path");
+  assert(verifiedRunDoc.body.includes("PAPERCLIP_HARBOR_RUNNER_CONFIG"), "Expected run doc to record dispatch config");
   assert(
     verifiedDiagnosisDoc.body.includes("Exact stop point") && verifiedDiagnosisDoc.body.includes("Next-action owner"),
     "Expected diagnosis doc to include exact stop point and next-action owner",
