@@ -241,7 +241,8 @@ function tableKey(schemaName: string, tableName: string): string {
 function nonSystemSchemaPredicate(identifier: string): string {
   return `${identifier} NOT IN ('pg_catalog', 'information_schema')
     AND ${identifier} NOT LIKE 'pg_toast%'
-    AND ${identifier} NOT LIKE 'pg_temp_%'`;
+    AND ${identifier} NOT LIKE 'pg_temp_%'
+    AND ${identifier} NOT LIKE 'pg_toast_temp_%'`;
 }
 
 function hasBackupTransforms(opts: RunDatabaseBackupOptions): boolean {
@@ -611,6 +612,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     );
 
     const schemas = new Set<string>(includedSchemas);
+    for (const table of tables) schemas.add(table.schema_name);
     for (const seq of sequences) schemas.add(seq.sequence_schema);
     const extraSchemas = [...schemas].filter((schemaName) => schemaName !== "public");
     if (extraSchemas.length > 0) {
