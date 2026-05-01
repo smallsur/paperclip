@@ -201,6 +201,12 @@ function isProductiveContinuationRun(latestRun: LatestIssueRun) {
       latestRun.livenessState === "needs_followup");
 }
 
+function isRepeatedProductiveContinuationRecovery(latestRun: SuccessfulLatestIssueRun) {
+  const latestContext = parseObject(latestRun.contextSnapshot);
+  return readNonEmptyString(latestContext.retryReason) === "issue_continuation_needed" &&
+    isProductiveContinuationRun(latestRun);
+}
+
 function parseLivenessIncidentKey(incidentKey: string | null | undefined) {
   if (!incidentKey) return null;
   return parseIssueGraphLivenessIncidentKey(incidentKey);
@@ -1712,6 +1718,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         if (!isProductiveContinuationRun(successfulRun)) {
           result.successfulContinuationObserved += 1;
           result.skipped += 1;
+          continue;
+        }
+
+        if (isRepeatedProductiveContinuationRecovery(successfulRun)) {
+          const updated = await escalateStrandedAssignedIssue({
+            issue,
+            previousStatus: "in_progress",
+            latestRun: successfulRun,
+            comment:
+              "Paperclip automatically retried continuation for this assigned `in_progress` issue and the retry " +
+              "made progress, but it still has no live execution path. Moving it to `blocked` so it is visible for intervention.",
+          });
+          if (updated) {
+            result.escalated += 1;
+            result.issueIds.push(issue.id);
+          } else {
+            result.skipped += 1;
+          }
           continue;
         }
 
